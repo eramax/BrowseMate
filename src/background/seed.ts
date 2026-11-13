@@ -1,7 +1,7 @@
 // مهارات مبدئية تُزرع مرة واحدة عند أول تشغيل — لا تعيد إضافة ما حذفه المستخدم
 import type { SkillFile } from '../shared/types';
 
-const SEED_VERSION = 10;
+const SEED_VERSION = 11;
 
 const SEEDS: SkillFile[] = [
   {
@@ -107,9 +107,14 @@ const SEEDS: SkillFile[] = [
     notes: 'ملف HTML واحد، بدون npm/build. التعديلات diff دقيقة — لا تعد كتابة الملف كاملاً.',
     instructions: `مهمتك: تصميم موقع ويب (Frontend فقط) وتقديمه كملف HTML واحد.
 1) البداية: استدعِ render_site ببيانات منظمة (brand, theme, accent, nav, sections: hero/features/about/pricing/testimonials/faq/gallery/contact/cta). محتوى واقعي كامل، صور picsum.photos.
-2) بعد كل معاينة استدعِ preview_diagnostics. إن وُجدت أخطاء فأصلحها وأعد المعاينة (حتى مرتين).
+2) إذا أعاد preview_html/render_site خطأ validation (HTML أو JavaScript) فاستخدم site_read ثم site_edit لإصلاح السطر المحدد — لا تعد التوليد الكامل. بعد كل معاينة ناجحة استدعِ preview_diagnostics وأصلح أي أخطاء (حتى مرتين).
 3) للتعديلات: لا تعد توليد الموقع. استدعِ site_read مرة لرؤية النص الحرفي، ثم site_edit بتعديلات diff [{oldText,newText}] — استخدم سياقاً كافياً ليكون oldText فريداً. يمكن عدة تعديلات في نداء واحد (كلها أو لا شيء). بعد النجاح تحقق بـ preview_diagnostics.
-4) للتصاميم المخصصة جداً فقط استخدم preview_html، ويمكن تعديلها بنفس site_edit.
+4) للتصاميم المخصصة/التطبيقات فقط استخدم preview_html، ويمكن تعديلها بنفس site_edit. قواعد كتابة الملف إلزامية:
+   - هيكل صحيح: <!doctype html> ثم <html> و<head> مع <title>...</title> مغلق و</head> ثم <body>...</body></html>.
+   - JavaScript بسيط: استخدم addEventListener فقط (لا onclick داخل HTML)، لا تستخدم قوالب نصية متداخلة، لا تضع كيانات HTML مثل &#39; داخل نصوص JS، واستخدم textContent بدل innerHTML عند الإمكان.
+   - لا تضع "</script>" داخل أي سلسلة JS. لا تعتمد على ملفات خارجية؛ كل CSS/JS داخل الملف (CDN مسموح).
+   - لا تستخدم localStorage مباشرة إن لم تحتج (المعاينة توفر بديلاً في الذاكرة).
+   - إن أعاد preview_html خطأ JavaScript/HTML فاقرأ الملف بـ site_read وأصلح السطر المذكور بـ site_edit — لا تعد التوليد الكامل.
 5) عند الخطأ: site_undo للتراجع عن آخر تعديل.
 6) اعرض ملخصاً قصيراً فقط؛ زر التحميل يظهر في الشات.`,
     params: [],

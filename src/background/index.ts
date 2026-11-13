@@ -126,6 +126,19 @@ chrome.runtime.onMessage.addListener((msg: any, _s, send) => {
           send({ ok: true });
           break;
         }
+        case 'get-artifact-html': {
+          const a = await getArtifact(msg.id);
+          if (!a) { send({ ok: false, error: 'not found' }); break; }
+          send({ ok: true, html: a.html ?? '', filename: a.filename });
+          break;
+        }
+        case 'preview-log': {
+          const prev = (await chromeKV.get<{ id: string; entries: any[] }>('previewLogs')) ?? { id: '', entries: [] };
+          const entries = [...(prev.id === msg.id ? prev.entries : []), ...(Array.isArray(msg.entries) ? msg.entries : [])].slice(-150);
+          await chromeKV.set('previewLogs', { id: msg.id, entries, updatedAt: Date.now() });
+          send({ ok: true });
+          break;
+        }
         case 'skills-sync': {
           send({ ok: true, status: msg.now ? await syncNow() : await syncStatus() });
           break;

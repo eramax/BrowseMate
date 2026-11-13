@@ -15,6 +15,7 @@ const manifest = {
   host_permissions: ['<all_urls>'],
   action: { default_title: 'BrowseMate' },
   icons: { '128': 'src/assets/icon128.png' },
+  sandbox: { pages: ['src/preview/sandbox.html'] },
 } as const;
 
 export default defineConfig({

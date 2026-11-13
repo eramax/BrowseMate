@@ -38,7 +38,7 @@ register({
     const html = renderSiteHtml(a as unknown as SiteData);
     const filename = a.filename || 'index.html';
     const result = await openPreview(html, filename);
-    await saveSite({ id: result.artifact.id, filename, html, version: 1, updatedAt: Date.now() }, false);
+    if (result.artifact?.id) await saveSite({ id: result.artifact.id, filename, html, version: 1, updatedAt: Date.now() }, false);
     return result;
   },
 });
@@ -55,7 +55,7 @@ register({
   execute: async (a) => {
     const filename = (a.filename || 'index.html').replace(/[\\/:*?"<>|]+/g, '-').slice(0, 80);
     const result = await openPreview(String(a.html), filename);
-    await saveSite({ id: result.artifact.id, filename, html: String(a.html), version: 1, updatedAt: Date.now() }, false);
+    if (!result.error) await saveSite({ id: result.artifact.id, filename, html: String(a.html), version: 1, updatedAt: Date.now() }, false);
     return result;
   },
 });
@@ -118,10 +118,32 @@ register({
   schema: z.object({}),
   execute: async () => {
     const info = await chromeKV.get<{ tabId: number; artifactId: string; filename: string }>('previewTab');
+    const logs = await chromeKV.get<{ id: string; entries: Array<{ level: string; args: string[]; ts: number }> }>('previewLogs');
+    if (logs?.entries?.length && (!info?.artifactId || logs.id === info.artifactId)) {
+      const errors = logs.entries.filter((e) => e.level === 'error').map((e) => (e.args || []).join(' ')).slice(-25);
+      const warnings = logs.entries.filter((e) => e.level === 'warn').map((e) => (e.args || []).join(' ')).slice(-25);
+      return {
+        errors: errors.length,
+        warnings: warnings.length,
+        errorMessages: errors,
+        warningMessages: warnings,
+        filename: info?.filename,
+        verdict: errors.length ? 'أصلح الأخطاء ثم أعد المعاينة' : warnings.length ? 'تعمل، لكن راجع التحذيرات' : 'تعمل بلا أخطاء',
+      };
+    }
     if (!info?.tabId) return { errors: 0, warnings: 0, note: 'لا توجد معاينة مفتوحة.' };
     const tab = await chrome.tabs.get(info.tabId).catch(() => null);
     if (!tab) return { errors: 0, warnings: 0, note: 'تبويب المعاينة أُغلق. أعد المعاينة إن لزم.' };
     const title = tab.title || '';
+    if (title.length > 220 || /<(style|body|script)\b/i.test(title)) {
+      return {
+        errors: 1,
+        warnings: 0,
+        lastError: 'HTML غير صالح: وسم <title> غير مغلق فابتلع بقية الصفحة (صفحة بيضاء)',
+        filename: info.filename,
+        verdict: 'أصلح بنية HTML ثم أعد preview_html أو استخدم site_read/site_edit',
+      };
+    }
     const m = title.match(/\[BM:err=(\d+),warn=(\d+)\]\s*(.*)$/);
     if (!m) return { errors: 0, warnings: 0, filename: info.filename, tabTitle: title.slice(0, 120), note: 'لا أخطاء مسجلة.' };
     const errors = Number(m[1]);
