@@ -1,5 +1,5 @@
 <script lang="ts">
-  // المهارات: تشغيل بالاسم (رسالة شات) + حذف + استيراد/تصدير JSON
+  // المهارات: تشغيل بالاسم + حذف + استيراد/تصدير JSON
   import type { SkillFile } from '../../shared/types';
   import type { Lang } from '../../shared/i18n';
 
@@ -20,10 +20,12 @@
 
   const L = $derived(lang === 'ar' ? {
     run: 'تشغيل', del: 'حذف', exp: 'تصدير', imp: 'استيراد JSON',
-    none: 'لا مهارات محفوظة', ph: 'الصق ملف المهارة JSON هنا', save: 'حفظ',
+    none: 'لا مهارات محفوظة بعد', ph: 'الصق ملف المهارة JSON هنا', save: 'حفظ',
+    hint: 'تُنشأ المهارات من الشات: «احفظ هذا كمهارة باسم …»',
   } : {
     run: 'Run', del: 'Delete', exp: 'Export', imp: 'Import JSON',
-    none: 'No saved skills', ph: 'Paste skill JSON here', save: 'Save',
+    none: 'No saved skills yet', ph: 'Paste skill JSON here', save: 'Save',
+    hint: 'Create skills from chat: “save this as a skill named …”',
   });
 
   function toggle(s: SkillFile) {
@@ -42,44 +44,45 @@
 
 <div class="view">
   <div class="list" dir={lang === 'ar' ? 'rtl' : 'ltr'}>
-    {#if !skills.length}<div class="empty">{L.none}</div>{/if}
+    {#if !skills.length}
+      <div class="empty"><div class="logo">◈</div>{L.none}<div class="hint">{L.hint}</div></div>
+    {/if}
     {#each skills as s (s.name)}
-      <div class="item" style="align-items:flex-start; flex-direction:column">
-        <div style="display:flex; width:100%; align-items:center; gap:8px">
-          <span class="title" style="white-space:normal" onclick={() => toggle(s)} title={s.description}>
-            <b>{s.name}</b> <span class="meta">{s.description}</span>
-          </span>
+      <div class="card">
+        <div class="row1">
+          <span class="title" role="button" tabindex="0" onclick={() => toggle(s)} onkeydown={(e) => e.key === 'Enter' && toggle(s)}>{s.name}</span>
           <button class="mini" onclick={() => exportSkill(s)}>{L.exp}</button>
-          <button class="mini danger" onclick={() => remove(s.name)}>{L.del}</button>
+          <button class="mini" onclick={() => remove(s.name)}>{L.del}</button>
         </div>
+        <div class="desc">{s.description}</div>
         {#if expanded === s.name}
-          <div style="display:flex; gap:6px; flex-wrap:wrap; margin-top:8px; width:100%">
+          <div style="display:flex; gap:6px; flex-wrap:wrap; margin-top:4px">
             {#each s.params as p (p.name)}
               <input
                 placeholder={p.name}
                 bind:value={paramValues[s.name][p.name]}
-                style="padding:5px 8px; border-radius:7px; border:1px solid var(--border); background:var(--bg); color:var(--text); font-size:12px"
+                style="width:110px;padding:6px 8px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:12px"
               />
             {/each}
-            <button class="mini" onclick={() => run(s.name, paramValues[s.name])}>▶ {L.run}</button>
+            <button class="mini" style="color:var(--accent);border-color:var(--accent)" onclick={() => run(s.name, paramValues[s.name])}>▶ {L.run}</button>
           </div>
         {/if}
       </div>
     {/each}
   </div>
 
-  <div style="padding:10px; border-top:1px solid var(--border)">
+  <div style="padding:10px 12px 12px; border-top:1px solid var(--border-soft)">
     {#if importing}
       <textarea
         bind:value={importText}
         placeholder={L.ph}
         rows="4"
         dir="ltr"
-        style="width:100%; font-size:11px; padding:8px; border-radius:8px; border:1px solid var(--border); background:var(--panel); color:var(--text)"
+        style="width:100%; font-size:11px; padding:8px; border-radius:9px; border:1px solid var(--border); background:var(--surface); color:var(--text)"
       ></textarea>
       <div style="display:flex; gap:6px; margin-top:6px">
-        <button class="btn" onclick={() => { importJson(importText); importText = ''; importing = false; }}>{L.save}</button>
-        <button class="btn ghost" onclick={() => (importing = false)}>✕</button>
+        <button class="btn" style="padding:7px 14px" onclick={() => { importJson(importText); importText = ''; importing = false; }}>{L.save}</button>
+        <button class="btn ghost" style="padding:7px 12px" onclick={() => (importing = false)}>✕</button>
       </div>
     {:else}
       <button class="mini" onclick={() => (importing = true)}>⇪ {L.imp}</button>

@@ -58,7 +58,10 @@
           var el = registry.get(v.id);
           if (!el) { send({ ok: false, error: 'element ' + v.id + ' not found (re-read the page)' }); return; }
           el.focus();
-          el.value = v.value;
+          // native setter — يعمل مع حقول React/Vue المتحكَّم بها
+          var proto = Object.getPrototypeOf(el);
+          var desc = Object.getOwnPropertyDescriptor(proto, 'value');
+          if (desc && desc.set) desc.set.call(el, v.value); else el.value = v.value;
           el.dispatchEvent(new Event('input', { bubbles: true }));
           el.dispatchEvent(new Event('change', { bubbles: true }));
           el.blur();

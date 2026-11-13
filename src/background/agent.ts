@@ -31,17 +31,22 @@ export async function runChat(deps: AgentDeps, sessionId: string, userText: stri
   const runId = crypto.randomUUID();
   const ac = new AbortController();
   deps.runs.set(runId, ac);
+  // إبقاء SW حياً أثناء التشغيل (MV3 يطفئه بعد ~30 ثانية خمول)
+  const keepAlive = setInterval(() => chrome.runtime.getPlatformInfo?.().catch(() => {}), 20000);
+  let full = '';
   try {
-    const model = await makeModel();
     const session = await deps.sessions.get(sessionId);
     if (!session) throw new Error('session not found');
     const tab = await deps.getActiveTab();
 
     deps.emit(sessionId, { type: 'chat-started', runId, sessionId });
 
+    // رسالة المستخدم تُحفظ أولاً — تظهر في الجلسة حتى لو فشل الاتصال بالإعدادات
     const userMsg: ChatMessage = { id: crypto.randomUUID(), role: 'user', content: userText, ts: Date.now() };
     await deps.sessions.append(sessionId, userMsg);
     const history: ChatMessage[] = [...session.messages, userMsg];
+
+    const model = await makeModel();
 
     let planArmed = false;
 
@@ -54,7 +59,6 @@ export async function runChat(deps: AgentDeps, sessionId: string, userText: stri
           deps.emit(sessionId, { type: 'approval-request', id: info.id, tool: info.tool, args: info.args, steps: info.steps })),
     };
 
-    let full = '';
     let plan: string[] | undefined = undefined;
 
     const result = streamText({
@@ -113,22 +117,30 @@ export async function runChat(deps: AgentDeps, sessionId: string, userText: stri
 
     await deps.sessions.append(sessionId, {
       id: crypto.randomUUID(), role: 'assistant',
-      content: full || (planArmed ? '' : ''), ts: Date.now(), plan: plan ?? undefined,
-    });
+      content: full || ' ', ts: Date.now(), plan: plan ?? undefined,
+    }).catch(() => {});
     deps.emit(sessionId, { type: 'done', runId });
   } catch (e: any) {
     if (deps.runs.get(runId)?.signal.aborted) {
+      // إيقاف من المستخدم: احفظ ما وصل منه بدل فقدانه
+      if (full.trim())
+        await deps.sessions.append(sessionId, {
+          id: crypto.randomUUID(), role: 'assistant', content: full + '\n\n> ⏹️ أُوقف بواسطة المستخدم', ts: Date.now(),
+        }).catch(() => {});
       deps.emit(sessionId, { type: 'done', runId });
       return;
     }
     const { message, code } = friendlyError(e);
     try {
+      // احفظ أي نص جزئي وصل قبل الخطأ + سبب الخطأ — لا تفقد كلام الوكيل
+      const partial = full.trim() ? full + `\n\n> ⚠️ ${message}` : `> ⚠️ ${message}`;
       await deps.sessions.append(sessionId, {
-        id: crypto.randomUUID(), role: 'assistant', content: `> ⚠️ ${message}`, ts: Date.now(),
+        id: crypto.randomUUID(), role: 'assistant', content: partial, ts: Date.now(),
       });
     } catch { /* الجلسة ربما حُذفت أثناء الخطأ */ }
     deps.emit(sessionId, { type: 'error', runId, message, code });
   } finally {
+    clearInterval(keepAlive);
     deps.runs.delete(runId);
   }
 }

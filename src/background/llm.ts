@@ -18,8 +18,9 @@ export async function listModels(): Promise<string[]> {
   if (!res.ok) throw new Error(`models fetch failed: HTTP ${res.status}`);
   const data: any = await res.json();
   const list = data.data ?? data.models ?? data;
-  return (Array.isArray(list) ? list : [])
-    .map((m: any) => m.id ?? m.name)
-    .filter((id: unknown): id is string => typeof id === 'string')
-    .sort();
+  return [...new Set(
+    (Array.isArray(list) ? list : [])
+      .map((m: any) => m.id ?? m.name)
+      .filter((id: unknown): id is string => typeof id === 'string'),
+  )].sort();
 }

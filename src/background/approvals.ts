@@ -33,5 +33,10 @@ export function createApprovalManager() {
       e.res(ok);
       return true;
     },
+    /** إيقاف: افصل كل الموافقات المعلقة كرفض حتى لا تعلق الأدوات */
+    rejectAll(): void {
+      for (const [, e] of pending) e.res(false);
+      pending.clear();
+    },
   };
 }

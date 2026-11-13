@@ -20,7 +20,7 @@ register({
   schema: z.object({ url: z.string().url() }),
   execute: async (a, ctx) => {
     const tab = await ctx.getActiveTab();
-    await chrome.tabs.update(tab.id!, { url: a.url });
+    // المستمع قبل التنقل حتى لا تفوتنا صفحة تُحمّل فوراً
     await new Promise<void>((resolve) => {
       const timer = setTimeout(finish, 15000);
       function finish() { clearTimeout(timer); chrome.tabs.onUpdated.removeListener(done); resolve(); }
@@ -28,6 +28,7 @@ register({
         if (tabId === tab.id && info.status === 'complete') finish();
       };
       chrome.tabs.onUpdated.addListener(done);
+      chrome.tabs.update(tab.id!, { url: a.url }).catch(() => finish());
     });
     return { navigated: a.url };
   },

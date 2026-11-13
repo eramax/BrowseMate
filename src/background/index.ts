@@ -44,7 +44,8 @@ chrome.runtime.onConnect.addListener((p) => {
     } else if (msg.type === 'approval-response') {
       approvals.resolve(msg.id, msg.approved);
     } else if (msg.type === 'stop') {
-      for (const ac of runs.values()) ac.abort(); // يلغي البث والمهارات الجارية (بين الخطوات)
+      approvals.rejectAll(); // لا تترك أداة معلقة على موافقة لن تأتي
+      for (const ac of runs.values()) ac.abort();
     } else if (msg.type === 'session-switch') {
       activeSessionId = msg.sessionId;
     }
