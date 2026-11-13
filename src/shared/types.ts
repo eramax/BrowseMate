@@ -40,7 +40,7 @@ export type WorkerToPanel =
   | { type: 'skill-progress'; skill: string; step: number; total: number }
   | { type: 'approval-request'; id: string; tool: string; args: unknown; steps?: string[] }
   | { type: 'done'; runId: string }
-  | { type: 'error'; runId?: string; message: string }
+  | { type: 'error'; runId?: string; message: string; code?: string }
   | { type: 'sessions-list'; sessions: Array<Pick<Session, 'id' | 'title' | 'updatedAt'>> }
   | { type: 'session-data'; session: Session };
 

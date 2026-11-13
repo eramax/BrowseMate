@@ -68,6 +68,14 @@ html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
   color: var(--text); font-size: 13px; outline: none;
 }
 .field input:focus, .field select:focus { border-color: var(--accent); }
+.combobox { position: relative; }
+.dropdown {
+  position: absolute; top: 100%; inset-inline: 0; z-index: 10; margin-top: 2px;
+  background: var(--panel); border: 1px solid var(--accent); border-radius: 9px;
+  max-height: 220px; overflow-y: auto; box-shadow: 0 6px 18px rgba(0,0,0,.45);
+}
+.opt { padding: 7px 10px; font-size: 12px; cursor: pointer; direction: ltr; text-align: left; }
+.opt:hover, .opt:focus { background: var(--border); outline: none; }
 .hint { font-size: 11px; color: var(--muted); }
 .toast { position: fixed; bottom: 14px; inset-inline: 0; text-align: center; color: var(--ok); font-size: 12.5px; }
 .seg { display: flex; border: 1px solid var(--border); border-radius: 9px; overflow: hidden; width: fit-content; }

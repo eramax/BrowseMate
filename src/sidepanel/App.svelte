@@ -66,7 +66,10 @@
       case 'error': {
         busy = false; approvals = []; progress = ''; livePlan = []; toolCalls = []; liveText = '';
         loadSession(sessionId);
-        if (e.type === 'error' && !e.runId) console.warn('BrowseMate:', e.message);
+        if (e.type === 'error') {
+          if (e.code === 'SETTINGS_MISSING') tab = 'settings';
+          else console.warn('BrowseMate:', e.message);
+        }
         break;
       }
       case 'sessions-list':

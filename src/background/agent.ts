@@ -121,19 +121,20 @@ export async function runChat(deps: AgentDeps, sessionId: string, userText: stri
       deps.emit(sessionId, { type: 'done', runId });
       return;
     }
-    const msg = friendlyError(e);
+    const { message, code } = friendlyError(e);
     try {
       await deps.sessions.append(sessionId, {
-        id: crypto.randomUUID(), role: 'assistant', content: `> ⚠️ ${msg}`, ts: Date.now(),
+        id: crypto.randomUUID(), role: 'assistant', content: `> ⚠️ ${message}`, ts: Date.now(),
       });
     } catch { /* الجلسة ربما حُذفت أثناء الخطأ */ }
-    deps.emit(sessionId, { type: 'error', runId, message: msg });
+    deps.emit(sessionId, { type: 'error', runId, message, code });
   } finally {
     deps.runs.delete(runId);
   }
 }
 
-export function friendlyError(e: any): string {
-  if (e?.message === 'SETTINGS_MISSING') return 'أكمل الإعدادات أولاً: Base URL + API key + النموذج.';
-  return `خطأ: ${e?.message ?? String(e)}`;
+export function friendlyError(e: any): { message: string; code?: string } {
+  if (e?.message === 'SETTINGS_MISSING')
+    return { message: 'أكمل الإعدادات أولاً: Base URL + API key + النموذج.', code: 'SETTINGS_MISSING' };
+  return { message: `خطأ: ${e?.message ?? String(e)}` };
 }
