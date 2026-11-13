@@ -44,23 +44,61 @@ register({
 register({
   name: 'save_skill',
   description:
-    'يحفظ مهارة JSON بعد التحقق. لا تقل للمستخدم أن المهارة حُفظت إلا بعد نجاح هذه الأداة. استخرج تسلسل الأدوات والوسائط من المحادثة إلى { name, description, params:[{name,type}], steps:[{tool,args,approval?}] } — وسائط ثابتة وقيم متغيرة كـ {{param}} داخل النصوص. name: حروف/أرقام/شرطة/مسافة (يمكن أن يكون عربياً). اعرض JSON للمستخدم للتأكيد قبل الاستدعاء.',
+    'يحفظ مهارة JSON مخصّصة (خطوات يدوية). استخدمها فقط إذا حدد المستخدم الخطوات بنفسه أو أردت تخصيص وسائط مختلفة. للحفظ من إجراء نُفّذ للتو استخدم save_skill_from_run.',
   sensitive: false,
   schema: z.object({
-    skill: z.union([z.unknown(), z.string()]),
+    name: z.string().describe('اسم المهارة (يمكن أن يكون عربياً)'),
+    description: z.string().describe('وصف مختصر لما تفعله'),
+    params: z.array(z.object({
+      name: z.string().describe('اسم المعامل بلا مسافات'),
+      type: z.enum(['string', 'number']),
+      required: z.boolean().optional(),
+    })).optional(),
+    steps: z.array(z.object({
+      tool: z.string().describe('اسم أداة موجودة'),
+      args: z.record(z.string(), z.any()).optional().describe('وسائط الأداة، ويمكن استخدام {{param}}'),
+      approval: z.boolean().optional(),
+    })).min(1),
   }),
   execute: async (a) => {
-    let raw = a.skill;
-    if (typeof raw === 'string') {
-      try { raw = JSON.parse(raw); } catch { return { error: 'skill ليست JSON صالحاً' }; }
-    }
-    if (!raw || typeof raw !== 'object') return { error: 'skill يجب أن تكون كائن JSON' };
-    // تطبيع الاسم (مسافات مكررة/شرطات زائدة)
-    const s: any = { ...raw };
-    if (typeof s.name === 'string') s.name = s.name.trim().replace(/\s+/g, ' ');
-    const err = validateSkill(s);
+    const skill: SkillFile = {
+      name: String(a.name ?? '').trim(),
+      description: String(a.description ?? '').trim(),
+      params: a.params ?? [],
+      steps: (a.steps ?? []).map((s: any) => ({ tool: s.tool, args: s.args ?? {}, approval: s.approval })),
+    };
+    const unknown = skill.steps.filter((s) => !getTool(s.tool));
+    if (unknown.length) return { error: `أدوات غير معروفة: ${unknown.map((s) => s.tool).join(', ')}` };
+    const err = validateSkill(skill);
     if (err) return { error: err };
-    const skill = s as SkillFile;
+    await skillKV.save(skill);
+    return { saved: skill.name, steps: skill.steps.length, visibleInSkillsTab: true };
+  },
+});
+
+register({
+  name: 'save_skill_from_run',
+  description:
+    'يحفظ المهارة من الأدوات التي نُفّذت فعلاً في هذا التشغيل (خطوات دقيقة بدون اختلاق). استدعها فوراً عندما يقول المستخدم "احفظ هذا/الخطوات كمهارة" — لا تطلب تأكيداً إضافياً ولا تعرض JSON.',
+  sensitive: false,
+  schema: z.object({
+    name: z.string().describe('اسم المهارة (يمكن أن يكون عربياً)'),
+    description: z.string().optional().describe('وصف مختصر'),
+  }),
+  execute: async (a, ctx) => {
+    const META = new Set(['save_skill', 'save_skill_from_run', 'list_skills', 'run_skill', 'delete_skill']);
+    const current = ctx.getToolLog?.() ?? [];
+    const fallback = current.some((t) => t.status === 'ok') ? [] : (await ctx.getSessionToolLog?.()) ?? [];
+    const usable = [...current, ...fallback].filter((t) => !META.has(t.name) && t.status === 'ok');
+    if (!usable.length) return { error: 'لا توجد أدوات ناجحة في هذا التشغيل — نفّذ الإجراء أولاً ثم احفظه.' };
+    const skill: SkillFile = {
+      name: String(a.name ?? '').trim(),
+      description: String(a.description ?? '').trim() || `مهارة من ${usable.length} خطوة`,
+      params: [],
+      steps: usable.map((t) => ({ tool: t.name, args: (t.args && typeof t.args === 'object' ? t.args : {}) as Record<string, unknown> })),
+    };
+    const err = validateSkill(skill);
+    if (err) return { error: err };
     await skillKV.save(skill);
     return { saved: skill.name, steps: skill.steps.length, visibleInSkillsTab: true };
   },

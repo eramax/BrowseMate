@@ -52,6 +52,10 @@ export interface ToolContext {
   signal?: AbortSignal;
   /** وضع الصلاحيات: sensitive = اسأل عن الحساس فقط، always = اسأل دائمًا، never = بدون سؤال */
   approvalMode: ApprovalMode;
+  /** أدوات التشغيل الحالي — تتيح للنموذج تحويل ما نُفذ فعلاً إلى مهارة */
+  getToolLog?: () => ToolCallInfo[];
+  /** أدوات آخر تشغيل محفوظ في الجلسة (للطلب في دور لاحق) */
+  getSessionToolLog?: () => Promise<ToolCallInfo[]>;
 }
 
 export type ApprovalMode = 'sensitive' | 'always' | 'never';

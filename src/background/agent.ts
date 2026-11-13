@@ -22,7 +22,7 @@ const MAX_STEPS = 24;
 
 const SYSTEM = `أنت BrowseMate — وكيل متصفح داخل إضافة كروم. تتحكم بالتبويب النشط عبر الأدوات المتاحة.
 القواعد:
-- عند التخطيط لعمل حساس متعدد الخطوات (مثل بحث أسعار عبر مواقع، أو ملء نموذج وإرساله)، ابدأ ردك بوسم خطة:
+- عند التخطيط لعمل حساس متعدد الخطوات، ابدأ ردك بوسم خطة:
 ::plan
 خطوة أولى
 خطوة ثانية
@@ -30,9 +30,10 @@ const SYSTEM = `أنت BrowseMate — وكيل متصفح داخل إضافة ك
 ثم نفّذ الأدوات. الموافقة على الخطة تُغطي تسلسلها كاملاً.
 - اقرأ الصفحة (read_page) قبل أي تعديل للحصول على معرفات العناصر.
 - لا تكرر أداة فشلت بنفس الوسائط؛ غيّر النهج واسأل المستخدم عند الحاجة.
-- بعد الانتهاء من الأدوات يجب أن تكتب ردًا نهائيًا تلخّص فيه النتيجة — لا تنهِ دورك بأداة فقط.
-- عند طلب حفظ إجراء كمهارة: استدعِ save_skill فعلياً، ولا تقل "تم الحفظ" إلا بعد نجاح الأداة (انظر حقل saved في نتيجتها).
-- الردود markdown بلغة المستخدم (غالبًا العربية). خذ بعين الاعتبار أن نتائج run_skill تعود إليك لتحليلها وردك بها.`;
+- بعد الانتهاء من الأدوات يجب أن تكتب ردًا نهائيًا يلخّص النتيجة — لا تنهِ دورك بأداة فقط.
+- عندما يطلب المستخدم تحويل إجراء/خطوات إلى مهارة: استدعِ save_skill_from_run فوراً بالاسم والوصف. لا تعرض JSON ولا تطلب تأكيداً إضافياً. لا تقل "تم الحفظ" إلا إذا أعادت الأداة saved.
+- إن كانت الخطوات موجودة في سجل الأدوات المرفق بالرسائل، اعتمد عليه كما هو.
+- الردود markdown بلغة المستخدم (غالبًا العربية).`;
 
 interface ToolLogEntry extends ToolCallInfo { result?: string }
 
@@ -88,6 +89,12 @@ export async function runChat(deps: AgentDeps, sessionId: string, userText: stri
       emit: (e) => deps.emit(sessionId, e),
       signal: ac.signal,
       approvalMode,
+      getToolLog: () => toolLog.map(({ result, ...t }) => t),
+      getSessionToolLog: async () => {
+        const s = await deps.sessions.get(sessionId);
+        const last = [...(s?.messages ?? [])].reverse().find((m) => m.role === 'assistant' && m.toolCalls?.length);
+        return last?.toolCalls ?? [];
+      },
       requestApproval: (tool, args, steps) =>
         deps.approvals.request(tool, args, steps, (info) =>
           deps.emit(sessionId, { type: 'approval-request', id: info.id, tool: info.tool, args: info.args, steps: info.steps })),
@@ -98,7 +105,7 @@ export async function runChat(deps: AgentDeps, sessionId: string, userText: stri
       instructions: SYSTEM + `\n\nسياق التبويب النشط الآن: title="${tab?.title ?? ''}" url="${tab?.url ?? ''}"`,
       abortSignal: ac.signal,
       stopWhen: isStepCount(MAX_STEPS),
-      messages: history.map((m) => ({ role: m.role === 'system' ? 'user' : m.role, content: m.content })),
+      messages: toModelMessages(history),
       tools: asAISDKTools(ctx, () => planArmed),
     });
 
@@ -191,7 +198,7 @@ async function fallbackAnswer(
     model,
     instructions: 'اكتب الآن ردًا نهائيًا موجزًا بالعربية يلخّص ما تم تنفيذه ونتيجته. لا تستخدم أدوات.',
     messages: [
-      ...history.map((m) => ({ role: m.role === 'system' ? 'user' : m.role, content: m.content })) as any,
+      ...toModelMessages(history),
       { role: 'assistant' as const, content: `سجل الأدوات المنفذة:\n${transcript}` },
       { role: 'user' as const, content: 'لخّص النتيجة النهائية لي في رد قصير.' },
     ],
@@ -201,6 +208,21 @@ async function fallbackAnswer(
 
 function safeStringify(v: unknown): string {
   try { return typeof v === 'string' ? v : JSON.stringify(v); } catch { return String(v); }
+}
+
+/** رسائل النموذج + سجل الأدوات — بدونه لا يعرف النموذج ما نُفّذ في الأدوار السابقة */
+function toModelMessages(history: ChatMessage[]) {
+  return history.map((m) => {
+    let content = m.content?.trim() ? m.content : ' ';
+    if (m.role === 'assistant' && m.toolCalls?.length) {
+      const lines = m.toolCalls
+        .slice(0, 30)
+        .map((t) => `- ${t.name}(${safeStringify(t.args).slice(0, 180)}) [${t.status}]`)
+        .join('\n');
+      content += `\n\n[سجل الأدوات المنفذة في هذا الرد]\n${lines}`;
+    }
+    return { role: (m.role === 'system' ? 'user' : m.role) as 'user' | 'assistant', content };
+  });
 }
 
 export function friendlyError(e: any): { message: string; code?: string } {
