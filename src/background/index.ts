@@ -94,7 +94,7 @@ chrome.runtime.onMessage.addListener((msg: any, _s, send) => {
         case 'ensure-session': {
           const first = (await sessions.list())[0];
           if (first) { send({ ok: true, id: first.id }); break; }
-          const s = await sessions.create('New chat');
+          const s = await sessions.create(msg.title || 'New chat');
           send({ ok: true, id: s.id });
           break;
         }

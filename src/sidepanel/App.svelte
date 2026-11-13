@@ -1,18 +1,13 @@
 <script lang="ts">
   // BrowseMate — App: يملك Port والأحداث والجلسات؛ العرض في مكوّنات
   import { openPanelPort, rpc } from './lib/port';
-  import { t, setLang as setI18nLang, type Lang } from '../shared/i18n';
+  import { setLang as setI18nLang, type Lang } from '../shared/i18n';
   import type { ChatMessage, Session, ToolCallInfo, SkillFile } from '../shared/types';
   import ChatView from './components/ChatView.svelte';
   import SkillList from './components/SkillList.svelte';
   import SettingsView from './components/SettingsView.svelte';
 
   type Tab = 'chat' | 'skills' | 'settings';
-  const TABS: Array<{ key: Tab; k: string }> = [
-    { key: 'chat', k: 'tabs.chat' },
-    { key: 'skills', k: 'tabs.skills' },
-    { key: 'settings', k: 'tabs.settings' },
-  ];
 
   let tab = $state<Tab>('chat');
   let lang = $state<Lang>('en');
@@ -34,6 +29,19 @@
   let watchdog: ReturnType<typeof setInterval> | undefined;
 
   const dir = $derived(lang === 'ar' ? 'rtl' : 'ltr');
+  const tabs = $derived(
+    lang === 'ar'
+      ? [
+          { key: 'chat' as const, label: 'شات' },
+          { key: 'skills' as const, label: 'المهارات' },
+          { key: 'settings' as const, label: 'الإعدادات' },
+        ]
+      : [
+          { key: 'chat' as const, label: 'Chat' },
+          { key: 'skills' as const, label: 'Skills' },
+          { key: 'settings' as const, label: 'Settings' },
+        ],
+  );
 
   // ===== Port (إعادة اتصال تلقائية + resync) =====
   const port = openPanelPort(handleEvent, () => {
@@ -89,7 +97,7 @@
     (async () => {
       const s: any = await rpc('get-settings');
       if (s.settings?.lang) setLangUi(s.settings.lang);
-      const ens: any = await rpc('ensure-session');
+      const ens: any = await rpc('ensure-session', { title: s.settings?.lang === 'ar' ? 'جلسة جديدة' : 'New chat' });
       sessionId = ens.id;
       await Promise.all([loadSession(sessionId), refreshSessions()]);
     })();
@@ -167,14 +175,14 @@
     await refreshSessions();
   }
   async function newSession() {
-    const res: any = await rpc('new-session');
+    const res: any = await rpc('new-session', { title: lang === 'ar' ? 'جلسة جديدة' : 'New chat' });
     if (res.ok) { await refreshSessions(); await openSession(res.session.id); }
   }
   async function deleteSession(id: string) {
     await rpc('delete-session', { id });
     if (id === sessionId) {
       sessionId = ''; messages = [];
-      const ens: any = await rpc('ensure-session');
+      const ens: any = await rpc('ensure-session', { title: s.settings?.lang === 'ar' ? 'جلسة جديدة' : 'New chat' });
       sessionId = ens.id;
       await loadSession(sessionId);
     }
@@ -184,7 +192,7 @@
   // ===== المهارات =====
   async function runSkill(name: string, params: Record<string, string>) {
     const parts = Object.entries(params).filter(([, v]) => v.trim()).map(([k, v]) => `${k}: ${v}`);
-    const res: any = await rpc('new-session');
+    const res: any = await rpc('new-session', { title: lang === 'ar' ? 'جلسة جديدة' : 'New chat' });
     if (!res.ok) return;
     const id = res.session.id;
     await rpc('rename-session', { id, title: name });
@@ -211,8 +219,8 @@
 
 <div class="app" {dir}>
   <div class="tabs">
-    {#each TABS as x}
-      <button class:active={tab === x.key} onclick={() => (tab = x.key)}>{t(x.k)}</button>
+    {#each tabs as x (x.key)}
+      <button class:active={tab === x.key} onclick={() => (tab = x.key)}>{x.label}</button>
     {/each}
   </div>
 
