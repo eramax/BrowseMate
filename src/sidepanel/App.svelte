@@ -181,12 +181,12 @@
     {#if tab === 'chat'}
       <ChatView
         {messages} {liveText} {livePlan} {toolCalls} {busy} {approvals} {progress} {lang}
-        onsend={send} onstop={stop} onapprove={approve} onretry={retry}
+        send={send} stop={stop} approve={approve} retry={retry}
       />
     {:else if tab === 'sessions'}
-      <SessionList sessions={sessionsList} {lang} onopen={openSession} oncreate={newSession} onremove={deleteSession} />
+      <SessionList sessions={sessionsList} {lang} open={openSession} create={newSession} remove={deleteSession} />
     {:else if tab === 'skills'}
-      <SkillList {skills} {lang} onrun={runSkill} onremove={deleteSkill} onimport={importSkill} />
+      <SkillList {skills} {lang} run={runSkill} remove={deleteSkill} importJson={importSkill} />
     {:else}
       <SettingsView {lang} setUiLang={setLangUi} />
     {/if}
