@@ -7,7 +7,7 @@ export interface KV {
 }
 
 export const chromeKV: KV = {
-  get: async (k) => (await chrome.storage.local.get(k))[k],
+  get: async (k) => (await chrome.storage.local.get(k))[k] as any,
   set: async (k, v) => { await chrome.storage.local.set({ [k]: v }); },
   remove: async (k) => { await chrome.storage.local.remove(k); },
   keys: async () => Object.keys(await chrome.storage.local.get(null)),

@@ -1,0 +1,74 @@
+// أدوات المهارات: run_skill / save_skill / list_skills / delete_skill
+import { z } from 'zod';
+import { register, getTool, allTools } from './registry';
+import { runSkill, validateSkill } from '../skills';
+import { chromeKV } from '../../shared/storage';
+import type { SkillFile } from '../../shared/types';
+
+const skillKV = {
+  async all(): Promise<Record<string, SkillFile>> { return (await chromeKV.get('skills')) ?? {}; },
+  async save(s: SkillFile) { const all = await this.all(); all[s.name] = s; await chromeKV.set('skills', all); },
+  async remove(name: string) { const all = await this.all(); delete all[name]; await chromeKV.set('skills', all); },
+};
+
+register({
+  name: 'run_skill',
+  description: 'ينفذ مهارة محفوظة بالاسم مع معاملاتها ويعيد نتائج كل الخطوات. استخدم list_skills أولاً إن لم تكن متأكدًا من الاسم.',
+  sensitive: false, // بوابة الدفعة المدمجة أدناه هي المعتمدة (المواصفة §4)
+  schema: z.object({
+    name: z.string(),
+    params: z.record(z.string(), z.union([z.string(), z.number()])).optional(),
+  }),
+  execute: async (a, ctx) => {
+    const skill = (await skillKV.all())[a.name];
+    if (!skill) return { error: `مهارة غير موجودة: ${a.name}` };
+    // موافقة مجمعة واحدة على كل الخطوات (المواصفة §5: ضمن الدفعة، approval:true معلَّمة فقط)
+    const planSteps = skill.steps.map((s) => (s.approval === true ? `${s.tool} ⚠` : s.tool));
+    const ok = await ctx.requestApproval(`run_skill:${a.name}`, { params: a.params ?? {} }, planSteps);
+    if (!ok) return { error: 'REFUSED_BY_USER', message: 'ألغى المستخدم' };
+    return {
+      ...(await runSkill(skill, a.params ?? {}, {
+        getTool,
+        emit: (evt) => ctx.emit(evt as any),
+        isSensitive: (t) => allTools().find((x) => x.name === t)?.sensitive ?? false,
+        requestApproval: async () => true, // الدفعة تغطي الخطوات
+        signal: ctx.signal,
+      })),
+      planSteps,
+    };
+  },
+});
+
+register({
+  name: 'save_skill',
+  description:
+    'يحفظ مهارة JSON بعد التحقق. عند طلب المستخدم حفظ إجراء كمهارة: استخرج تسلسل الأدوات والوسائط من المحادثة إلى { name (kebab-case), description, params:[{name,type}], steps:[{tool,args,approval?}] } — وسائط ثابتة وقيم متغيرة كـ {{param}} داخل النصوص. اعرض JSON للمستخدم للتأكيد قبل الاستدعاء.',
+  sensitive: false,
+  schema: z.object({ skill: z.unknown() }),
+  execute: async (a) => {
+    const err = validateSkill(a.skill);
+    if (err) return { error: err };
+    const skill = a.skill as SkillFile;
+    await skillKV.save(skill);
+    return { saved: skill.name, steps: skill.steps.length };
+  },
+});
+
+register({
+  name: 'list_skills',
+  description: 'يسرد المهارات المحفوظة (اسم، وصف، معاملات).',
+  sensitive: false,
+  schema: z.object({}),
+  execute: async () =>
+    Object.values(await skillKV.all()).map((s) => ({ name: s.name, description: s.description, params: s.params })),
+});
+
+register({
+  name: 'delete_skill',
+  description: 'يحذف مهارة محفوظة بالاسم.',
+  sensitive: true,
+  schema: z.object({ name: z.string() }),
+  execute: async (a) => { await skillKV.remove(a.name); return { deleted: a.name }; },
+});
+
+export { skillKV };

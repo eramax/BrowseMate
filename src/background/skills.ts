@@ -18,9 +18,11 @@ export interface SkillRunDeps {
   signal?: AbortSignal;
 }
 
-export type SkillRunResult =
-  | { ok: true; results: RunResult[] }
-  | { ok: false; error: string; results: RunResult[] };
+export type SkillRunResult = {
+  ok: boolean;
+  error?: string;
+  results: RunResult[];
+};
 
 interface RunResult {
   step: number;

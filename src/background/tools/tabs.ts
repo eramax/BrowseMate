@@ -24,7 +24,7 @@ register({
     await new Promise<void>((resolve) => {
       const timer = setTimeout(finish, 15000);
       function finish() { clearTimeout(timer); chrome.tabs.onUpdated.removeListener(done); resolve(); }
-      const done = (tabId: number, info: chrome.tabs.TabChangeInfo) => {
+      const done = (tabId: number, info: { status?: string }) => {
         if (tabId === tab.id && info.status === 'complete') finish();
       };
       chrome.tabs.onUpdated.addListener(done);
