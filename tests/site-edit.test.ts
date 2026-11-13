@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { applyEdits, editOnce } from '../src/background/site-edit';
+import { applyEdits, applyEditsPartial, editOnce } from '../src/background/site-edit';
 
 const html = '<h1>Hello</h1><p class="x">A</p><p class="x">A</p>';
 
@@ -47,5 +47,39 @@ describe('editOnce (OpenCode-style edit)', () => {
   it('rejects missing oldString and no-op edits', () => {
     expect(editOnce('abc', 'zzz', 'y').ok).toBe(false);
     expect(editOnce('abc', 'a', 'a').ok).toBe(false);
+  });
+});
+
+
+describe('partial edits + nearby', () => {
+  const text = '.a { color: red; }\n.b { color: blue; }\n.c { color: green; }';
+
+  it('keeps successful edits and reports the failed one with nearby text', () => {
+    const r = applyEditsPartial(text, [
+      { oldText: '.a { color: red; }', newText: '.a { color: gray; }' },
+      { oldText: '.b {\n  color: purple;\n}', newText: '.b { color: gray; }' },
+      { oldText: '.c { color: green; }', newText: '.c { color: #333; }' },
+    ]);
+    expect(r.applied).toBe(2);
+    expect(r.failed).toHaveLength(1);
+    expect(r.failed[0].index).toBe(1);
+    expect(r.failed[0].nearby).toContain('.b { color: blue; }');
+    expect(r.html).toContain('.a { color: gray; }');
+    expect(r.html).toContain('.c { color: #333; }');
+    expect(r.html).toContain('.b { color: blue; }');
+  });
+
+  it('returns the actual nearby block for an atomic missing edit', () => {
+    const r = applyEdits('.task-checkbox:checked {\n  background: gray;\n}', [
+      { oldText: '.task-checkbox:checked {\n  background: purple;\n}', newText: '.task-checkbox:checked {\n  background: black;\n}' },
+    ]);
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.nearby).toContain('background: gray;');
+  });
+
+  it('returns nearby for a missing single edit', () => {
+    const r = editOnce(text, '.b {\n  color: purple;\n}', '.b { color: gray; }');
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.nearby).toContain('.b { color: blue; }');
   });
 });

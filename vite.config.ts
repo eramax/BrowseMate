@@ -20,4 +20,6 @@ const manifest = {
 
 export default defineConfig({
   plugins: [svelte(), crx({ manifest })],
+  // service worker لا يملك window/document — لا تحقن Vite module-preload helper
+  build: { modulePreload: false },
 });

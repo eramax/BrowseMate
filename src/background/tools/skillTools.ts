@@ -160,6 +160,7 @@ register({
   name: 'list_skills',
   description: 'يسرد المهارات المحفوظة (اسم، وصف، معاملات).',
   sensitive: false,
+  idempotent: true,
   schema: z.object({}),
   execute: async () =>
     Object.values(await skillKV.all()).map((s) => ({ name: s.name, description: s.description, params: s.params })),

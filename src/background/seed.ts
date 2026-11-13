@@ -1,7 +1,8 @@
 // مهارات مبدئية تُزرع مرة واحدة عند أول تشغيل — لا تعيد إضافة ما حذفه المستخدم
 import type { SkillFile } from '../shared/types';
+import { getSeedRev, setSeedRev, saveSkillsBulk, getSkills } from './skill-store';
 
-const SEED_VERSION = 19;
+const SEED_VERSION = 21;
 
 const SEEDS: SkillFile[] = [
   {
@@ -106,14 +107,16 @@ const SEEDS: SkillFile[] = [
     site: 'أي متصفح',
     notes: 'ملف HTML واحد (CSS/JS داخله) بدون npm/build. الكتابة الأولى بـ ws_write، ثم الإضافة بـ ws_append، والتعديل/الإدراج بـ edit (أو ws_patch لعدة تعديلات).',
     instructions: `مهمتك: بناء موقع/تطبيق ويب (Frontend فقط) كملف HTML واحد يحتوي CSS وJS داخله. لا تستخدم أي قالب جاهز ولا تفترض نوع المشروع. اجعله Single Page: كل الشاشات/الأقسام داخل نفس الملف.
+0) لمشروع جديد: ws_reset أولاً. لمواصلة مشروع موجود: ws_list/ws_read.
 1) اكتب index.html مرة واحدة عبر ws_write. ابدأ بالجزء الأول (head + style + بداية body). لا تحاول كتابة الملف كله إن كان طويلاً.
-2) بعد الكتابة الأولى لا تستخدم ws_write مرة أخرى. استخدم:
+2) بعد الكتابة الأولى لا تستخدم ws_write مرة أخرى (إلا لإعادة بناء كاملة يطلبها المستخدم، مع overwrite:true). استخدم:
    - ws_append لإضافة الجزء التالي في نهاية الملف (استكمال chunk).
    - edit لتعديل أو إدراج جزء في مكان محدد: oldString فريد → newString يحتوي الجزء الجديد. هذا هو diff، وهو الأداة الأساسية لأي تعديل لاحق.
-   - ws_patch فقط عندما تحتاج عدة تعديلات مستقلة في نداء واحد.
-3) بعد كل جزء اقرأ complete وtail من نتيجة الأداة: إن كانت complete:false أكمل بـ ws_append أو edit. لا تكرر نفس الجزء، ولا تعد إرسال الملف كاملاً.
+   - ws_patch فقط عندما تحتاج عدة تعديلات مستقلة في نداء واحد. إن فشل بعضها فسيعيد failed/nearby؛ أصلح الفاشل فقط.
+   - بعد نجاح edit أو ws_patch لا تعيد ws_read؛ انتقل مباشرة إلى ws_preview.
+3) بعد كل جزء اقرأ complete وtail من نتيجة الأداة: إن كانت complete:false أكمل بـ ws_append أو edit. لا تكرر نفس الجزء، ولا تعد إرسال الملف كاملاً. ws_patch يطبق الناجح ويبلغ عن الفاشل (partial)؛ لا تعتبره فشلاً كاملاً.
 4) ws_read لرؤية النص الحرفي قبل edit. ws_list لمراجعة الملف.
-5) ws_preview للمعاينة. إن أعاد خطأ HTML/JS: اقرأ الملف بـ ws_read ثم أصلح السطر المذكور بـ edit. رقم السطر في الرسالة مطلق داخل الملف. لا تعد توليد الملف.
+5) ws_preview للمعاينة. إن أعاد خطأ HTML/JS: اقرأ الملف بـ ws_read ثم أصلح السطر المذكور بـ edit. رقم السطر في الرسالة مطلق داخل الملف. إن فشل edit فراجع nearby وانسخ النص الحرفي؛ لا تعد توليد الملف.
 6) بعد نجاح المعاينة: preview_diagnostics، وأصلح أخطاء console بـ edit (حتى مرتين).
 7) ws_download لتنزيل الملف، أو اترك زر التحميل في الشات.
 8) قواعد الكود:
@@ -130,7 +133,6 @@ const SEEDS: SkillFile[] = [
 ];
 
 export async function seedSkills() {
-  const { getSeedRev, setSeedRev, saveSkillsBulk, getSkills } = await import('./skill-store');
   const seeded = await getSeedRev();
   if (seeded >= SEED_VERSION) return;
   const existing = await getSkills();

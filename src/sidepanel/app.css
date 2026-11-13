@@ -140,7 +140,7 @@ input, textarea, select { font: inherit; }
   border: 1px solid var(--border); color: var(--muted); display: inline-flex; align-items: center; gap: 4px;
 }
 .chip.ok { border-color: rgba(74,222,128,.4); color: var(--ok); }
-.chip.err, .chip.refused { border-color: rgba(255,123,123,.4); color: var(--err); }
+.chip.err, .chip.error, .chip.refused { border-color: rgba(255,123,123,.4); color: var(--err); }
 .chip.running { border-color: rgba(124,156,255,.5); color: var(--accent); }
 .plan-card {
   background: var(--surface); border: 1px solid rgba(124,156,255,.35);

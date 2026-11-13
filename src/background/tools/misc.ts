@@ -6,6 +6,7 @@ register({
   name: 'screenshot',
   description: 'لقطة PNG للتبويب النشط (dataURL) للتأكد من حالة الصفحة.',
   sensitive: false,
+  idempotent: true,
   schema: z.object({}),
   execute: async (_a, ctx) => {
     const tab = await ctx.getActiveTab();

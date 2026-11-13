@@ -6,6 +6,7 @@ register({
   name: 'list_tabs',
   description: 'يعرض كل النوافذ والتبويبات وحالتها (مجموعة/غير مجمع، النشط منها).',
   sensitive: false,
+  idempotent: true,
   schema: z.object({}),
   execute: async () =>
     (await chrome.tabs.query({})).map((t) => ({

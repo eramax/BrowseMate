@@ -10,6 +10,7 @@ register({
   description:
     'يفحص التبويب النشط: أخطاء console، طلبات الشبكة (url/status)، وقائمة السكربتات (ids). اختياريًا scriptId يجلب مصدر ذلك السكربت.',
   sensitive: false,
+  idempotent: true,
   schema: z.object({ scriptId: z.string().optional() }),
   execute: async (a, ctx) => {
     const tab = await ctx.getActiveTab();

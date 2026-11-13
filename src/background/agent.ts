@@ -33,7 +33,7 @@ const SYSTEM = `أنت BrowseMate — وكيل متصفح داخل إضافة ك
 - إن وعدت بإصلاح أو إعادة محاولة، نفّذ الأداة في نفس الدور. لا تنهِ دورك بجملة «سأصلح» أو «سأعيد» بدون تنفيذ.
 - بعد الانتهاء من الأدوات يجب أن تكتب ردًا نهائيًا يلخّص النتيجة — لا تنهِ دورك بأداة فقط.
 - لإنشاء مستندات منسقة (سيرة، خطاب، تقرير): استخدم render_cv أو render_document ببيانات منظمة. لا تكتب HTML ولا تستخدم export_pdf إلا إذا طلب المستخدم PDF مباشراً.
-- لبناء موقع/تطبيق ويب: استخدم ws_write للجزء الأول من index.html، ثم ws_append للاستكمال وedit (diff) للتعديل. استخدم ws_patch فقط لعدة تعديلات في نداء واحد. لا تكتب الملف كله في نداء واحد، ولا تستخدم قوالب جاهزة. بعد الكتابة استخدم ws_preview ثم preview_diagnostics.
+- لبناء موقع/تطبيق ويب: استخدم ws_write للجزء الأول من index.html، ثم ws_append للاستكمال وedit (diff) للتعديل. استخدم ws_patch فقط لعدة تعديلات في نداء واحد. بعد نجاح edit لا تعيد ws_read؛ انتقل إلى ws_preview. لا تستخدم ws_write بعد أول كتابة إلا مع overwrite:true. لا تكتب الملف كله في نداء واحد، ولا تستخدم قوالب جاهزة. بعد الكتابة استخدم ws_preview ثم preview_diagnostics.
 - عندما يطلب المستخدم تحويل إجراء/خطوات إلى مهارة: استدعِ save_skill_from_run فوراً. المهارة يجب أن تكون عامة قابلة لإعادة الاستخدام: حدّد whenToUse (المشكلة)، وsite إن كانت للموقع نفسه، ومرّر replacements لتحويل القيم المحددة (روابط، كلمات بحث، أسماء) إلى معاملات {{param}}، وعرّفها في params مع description وexample. لا تعرض JSON ولا تطلب تأكيداً. لا تقل "تم الحفظ" إلا إذا أعادت الأداة saved.
 - إن كانت الخطوات موجودة في سجل الأدوات المرفق بالرسائل، اعتمد عليه كما هو.
 - الردود markdown بلغة المستخدم (غالبًا العربية).`;
@@ -143,15 +143,22 @@ export async function runChat(deps: AgentDeps, sessionId: string, userText: stri
         persist(true);
       } else if (type === 'tool-result') {
         const out: any = (part as any).output;
-        if (out?.artifact?.id) artifacts.push(out.artifact);
+        if (out?.artifact?.id) {
+          // إبقاء زر تحميل واحد لكل اسم ملف (آخر إصدار يفوز)
+          const i = artifacts.findIndex((a) => a.filename === out.artifact.filename);
+          if (i >= 0) artifacts[i] = out.artifact;
+          else artifacts.push(out.artifact);
+        }
         const entry = toolLog.find((t) => t.name === (part as any).toolName && t.status === 'running');
+        const status: ToolCallInfo['status'] =
+          out?.error === 'REFUSED_BY_USER' ? 'refused' : out?.error ? 'error' : 'ok';
         if (entry) {
-          entry.status = out?.error === 'REFUSED_BY_USER' ? 'refused' : 'ok';
+          entry.status = status;
           entry.result = safeStringify(out).slice(0, 500);
         }
         deps.emit(sessionId, {
           type: 'tool-end', runId,
-          info: { name: (part as any).toolName, args: (part as any).input, status: out?.error === 'REFUSED_BY_USER' ? 'refused' : 'ok' },
+          info: { name: (part as any).toolName, args: (part as any).input, status },
         });
         persist(true);
       } else if (type === 'error') {

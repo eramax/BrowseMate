@@ -8,6 +8,7 @@ register({
   description:
     'يقرأ التبويب النشط: العنوان، URL، نص مقتضب، والعناصر التفاعلية (حقول/أزرار/روابط بمعرفات ta-N). اقرأه قبل أي تعديل.',
   sensitive: false,
+  idempotent: true,
   schema: z.object({}),
   execute: async (_a, ctx) => withPage((await ctx.getActiveTab()).id!, 'read'),
 });
@@ -16,6 +17,7 @@ register({
   name: 'summarize_page',
   description: 'يستخرج نص المقال من التبويب النشط — خذ النتيجة ولخّصها في ردك.',
   sensitive: false,
+  idempotent: true,
   schema: z.object({}),
   execute: async (_a, ctx) => withPage((await ctx.getActiveTab()).id!, 'read'),
 });

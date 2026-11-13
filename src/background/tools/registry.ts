@@ -7,6 +7,8 @@ export interface RegisteredTool {
   name: string;
   description: string;
   sensitive: boolean;
+  /** قراءة/معاينة: يسمح بتكرارها لأن حالة الملف قد تغيرت بين الاستدعاءين */
+  idempotent?: boolean;
   schema: z.ZodTypeAny;
   jsonSchema: Record<string, unknown>;
   execute: (args: any, ctx: ToolContext) => Promise<unknown>;
@@ -28,16 +30,20 @@ export function asAISDKTools(ctx: ToolContext, isPlanArmed: () => boolean): Reco
       description: t.description,
       inputSchema: t.schema,
       execute: async (args: any) => {
-        // حماية من الحلقات: نفس الأداة بنفس الوسائط مرتين = أوقف وأطلب تغيير النهج
-        const key = t.name + ':' + stableStringify(args);
-        const seen = ctx.seenCalls?.get(key) ?? 0;
-        if (seen >= 1) {
-          return {
-            error: 'REPEATED_IDENTICAL_CALL',
-            message: 'نفس الاستدعاء تكرر بنفس الوسائط — لا تعده. اقرأ الملف (ws_read أو site_read) ثم عدّل بـ edit، أو غيّر النهج/الوسائط.',
-          };
+        // حماية من الحلقات: نفس الأداة بنفس الوسائط مرتين = أوقف وأطلب تغيير النهج.
+        // لا نطبقها على أدوات القراءة/المعاينة: تكرار ws_preview بعد تعديل ضروري
+        // (وبدونه تبقى المعاينة على نسخة قديمة كما حدث فعلياً).
+        if (!t.idempotent) {
+          const key = t.name + ':' + stableStringify(args);
+          const seen = ctx.seenCalls?.get(key) ?? 0;
+          if (seen >= 1) {
+            return {
+              error: 'REPEATED_IDENTICAL_CALL',
+              message: 'نفس الاستدعاء تكرر بنفس الوسائط — لا تعده. اقرأ الملف (ws_read أو site_read) ثم عدّل بـ edit، أو غيّر النهج/الوسائط.',
+            };
+          }
+          ctx.seenCalls?.set(key, seen + 1);
         }
-        ctx.seenCalls?.set(key, seen + 1);
         if (ctx.callCount) {
           ctx.callCount.value++;
           if (ctx.callCount.value > 40) {

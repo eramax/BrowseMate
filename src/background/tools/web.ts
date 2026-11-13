@@ -28,6 +28,7 @@ register({
   description:
     'يقرأ الملف الحالي للموقع (HTML) لتحريره بـ site_edit. استخدمه مرة واحدة عند الحاجة للتعديل، ولا تعد كتابة الملف كاملاً.',
   sensitive: false,
+  idempotent: true,
   schema: z.object({}),
   execute: async () => {
     const ws = await getSite();
@@ -78,6 +79,7 @@ register({
   description:
     'يقرأ أخطاء/تحذيرات console من آخر معاينة عبر عنوان تبويب المعاينة. استخدمه بعد كل معاينة: إن وُجدت أخطاء أصلح الموقع وأعد المعاينة (حتى مرتين).',
   sensitive: false,
+  idempotent: true,
   schema: z.object({}),
   execute: async () => {
     const info = await chromeKV.get<{ tabId: number; artifactId: string; filename: string }>('previewTab');

@@ -4,7 +4,9 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
+    "predev": "node scripts/copy-brotli.mjs",
     "dev": "vite",
+    "prebuild": "node scripts/copy-brotli.mjs",
     "build": "vite build",
     "test": "vitest run",
     "test:watch": "vitest"

@@ -59,6 +59,7 @@ register({
   description:
     'يجلب النص الكامل (الترجمة الأصلية) من لوحة "إظهار النص" في فيديو يوتيوب المفتوح — يدوية وتلقائية. استخدمه لتلخيص الفيديو. إن لم يكن التبويب فيديو يوتيوب انتقل إليه أولاً بـ navigate.',
   sensitive: false,
+  idempotent: true,
   schema: z.object({}),
   execute: async (_a, ctx) => {
     const tab = await ctx.getActiveTab();

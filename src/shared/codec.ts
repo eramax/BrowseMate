@@ -2,12 +2,23 @@
 // + base64 + chunks لاحترام حدود chrome.storage.sync
 const CHUNK = 6000;
 
-let brotliPromise: Promise<any> | null = null;
+let brotliPromise: Promise<any | null> | null = null;
 async function getBrotli(): Promise<any | null> {
   if (!brotliPromise) {
-    brotliPromise = import('brotli-wasm')
-      .then((m: any) => m.default)
-      .catch(() => null);
+    brotliPromise = (async () => {
+      try {
+        // ملفات Brotli تُنسخ إلى public/brotli عند البناء (prebuild) وتُحمَّل بعنوان
+        // وقت التشغيل — لا نستخدم import ثابتاً حتى لا يحقن Vite module-preload helper
+        // الذي يعتمد على window/document داخل service worker.
+        if (typeof chrome === 'undefined' || !chrome.runtime?.getURL) return null;
+        const base = chrome.runtime.getURL('brotli/');
+        const mod: any = await import(/* @vite-ignore */ base + 'brotli_wasm.js');
+        await mod.default(chrome.runtime.getURL('brotli/brotli_wasm_bg.wasm'));
+        return mod;
+      } catch {
+        return null;
+      }
+    })();
   }
   try {
     return await brotliPromise;
