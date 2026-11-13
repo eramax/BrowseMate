@@ -24,6 +24,6 @@ export async function withPage<T = unknown>(
   extra: Record<string, unknown> = {},
 ): Promise<{ ok: boolean; data?: T; error?: string }> {
   if (!(await ensureInjected(tabId)))
-    return { ok: false, error: 'PAGE_RESTRICTED', message: 'هذه الصفحة لا يمكن التحكم بها (مقيّدة من كروم)' };
+    return { ok: false, error: 'PAGE_RESTRICTED: هذه الصفحة لا يمكن التحكم بها (مقيّدة من كروم)' };
   return chrome.tabs.sendMessage(tabId, { __ta: 'page-tools', op, ...extra });
 }
