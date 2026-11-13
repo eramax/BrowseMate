@@ -103,6 +103,35 @@ input, textarea, select { font: inherit; }
 .msg.assistant { align-self: stretch; display: flex; flex-direction: column; gap: 6px; }
 .msg.assistant .who { display: flex; align-items: center; gap: 6px; font-size: 10.5px; color: var(--muted); }
 .msg.assistant .who .logo { width: 16px; height: 16px; border-radius: 5px; display: grid; place-items: center; background: linear-gradient(135deg,#6d8dff,#9d6bff); color: #fff; font-size: 9px; font-weight: 800; }
+.flow-host {
+  --fd-bg: transparent;
+  --fd-bg-solid: var(--surface);
+  --fd-fg: var(--text);
+  --fd-fg-soft: var(--text-soft);
+  --fd-fg-faint: var(--muted);
+  --fd-border: var(--border);
+  --fd-border-strong: #33405c;
+  --fd-border-subtle: var(--border-soft);
+  --fd-code-bg: #0a0e16;
+  --fd-code-fg: #e6e9f2;
+  --fd-link: #9db4ff;
+  --fd-focus: var(--accent);
+  --fd-callout: var(--surface-2);
+  --fd-danger: var(--err);
+  --fd-success: var(--ok);
+  --fd-warning: var(--warn);
+  --fd-info: var(--accent);
+  --fd-veil: rgba(0, 0, 0, .4);
+  --fd-veil-strong: rgba(0, 0, 0, .6);
+  --fd-mark: rgba(124, 156, 255, .28);
+  --fd-code-keyword: #c792ea;
+  --fd-code-string: #c3e88d;
+  --fd-code-number: #f78c6c;
+  --fd-code-comment: #7a8299;
+  --fd-code-function: #82aaff;
+  --fd-code-tag: #f07178;
+  --fd-code-type: #ffcb6b;
+}
 .flow-host .flowdown { font-size: 13.5px; line-height: 1.75; color: var(--text); }
 .flow-host .flowdown :is(p, li, h1, h2, h3, h4, td, th, blockquote) { color: var(--text); }
 .flow-host .flowdown a { color: #9db4ff; }

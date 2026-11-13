@@ -53,6 +53,17 @@
 
   const currentTitle = $derived(sessions.find((s) => s.id === currentId)?.title ?? L.newSession);
   const runningTool = $derived(toolCalls.find((c) => c.status === 'running')?.name);
+  const suggestions = $derived(lang === 'ar' ? [
+    'لخّص هذه الصفحة',
+    'ما أخطاء console في هذه الصفحة؟',
+    'جمّع تبويباتي في مجموعات حسب الموضوع',
+    'ابحث عن سعر OnePlus 16',
+  ] : [
+    'Summarize this page',
+    'What console errors are on this page?',
+    'Group my tabs by topic',
+    'Find the OnePlus 16 price',
+  ]);
 
   function submit() {
     const t = text.trim();
@@ -126,7 +137,15 @@
     {/if}
 
     {#if !busy && !messages.length && !settingsError}
-      <div class="empty">BrowseMate</div>
+      <div class="empty">
+        <div class="logo">B</div>
+        <span>BrowseMate</span>
+        <div class="suggestions">
+          {#each suggestions as s}
+            <button class="suggestion" onclick={() => send(s)}>{s}</button>
+          {/each}
+        </div>
+      </div>
     {/if}
   </div>
 

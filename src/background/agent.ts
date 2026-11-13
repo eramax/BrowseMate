@@ -44,6 +44,9 @@ export async function runChat(deps: AgentDeps, sessionId: string, userText: stri
     // رسالة المستخدم تُحفظ أولاً — تظهر في الجلسة حتى لو فشل الاتصال بالإعدادات
     const userMsg: ChatMessage = { id: crypto.randomUUID(), role: 'user', content: userText, ts: Date.now() };
     await deps.sessions.append(sessionId, userMsg);
+    // عنوان تلقائي للجلسة من أول رسالة
+    if (session.messages.length === 0)
+      await deps.sessions.update(sessionId, { title: userText.trim().slice(0, 42) });
     const history: ChatMessage[] = [...session.messages, userMsg];
 
     const model = await makeModel();

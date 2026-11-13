@@ -24,7 +24,6 @@ let activeSessionId = '';
 chrome.runtime.onInstalled.addListener(() => {
   chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch(console.error);
 });
-chrome.runtime.onStartup?.addListener?.(initLang);
 initLang();
 
 async function initLang() {

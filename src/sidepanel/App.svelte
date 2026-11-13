@@ -125,10 +125,12 @@
 
   // ===== الجلسات =====
   async function openSession(id: string) {
+    if (busy) { stop(); busy = false; } // لا تغيّر الجلسة وسط تشغيل
     sessionId = id;
     port.send({ type: 'session-switch', sessionId: id });
     tab = 'chat';
     await loadSession(id);
+    await refreshSessions();
   }
   async function newSession() {
     const res: any = await rpc('new-session');
