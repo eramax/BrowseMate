@@ -1,7 +1,7 @@
 // مهارات مبدئية تُزرع مرة واحدة عند أول تشغيل — لا تعيد إضافة ما حذفه المستخدم
 import type { SkillFile } from '../shared/types';
 
-const SEED_VERSION = 17;
+const SEED_VERSION = 18;
 
 const SEEDS: SkillFile[] = [
   {
@@ -118,9 +118,8 @@ const SEEDS: SkillFile[] = [
 8) قواعد الكود:
    - HTML صحيح ومغلق: <!doctype html> ... </html>.
    - استخدم addEventListener فقط (لا onclick داخل HTML)، ولا تضع "</script>" داخل أي سلسلة JS.
-   - لبناء العناصر ديناميكياً: document.createElement وtextContent؛ لا innerHTML لبيانات المستخدم.
-   - إن احتجت دالة escape، استخدم هذا النمط الصحيح: const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-     لا تكتب ''' مطلقاً.
+   - لبناء العناصر ديناميكياً: document.createElement + textContent. لا تستخدم innerHTML إطلاقاً، ولا تكتب دالة escapeHtml. هذا يمنع أخطاء الاقتباس نهائياً.
+   - إن احتجت قالب HTML ثابتاً، استخدم <template> وcloneNode ثم املأ النصوص بـ textContent.
    - كل CSS/JS داخل الملف. CDN مسموح.
 9) لا تنهِ دورك بوعد («سأصلح»، «سأعيد») بدون تنفيذ الأداة في نفس الدور. اعرض ملخصاً قصيراً فقط.`,
     params: [],
