@@ -1,4 +1,4 @@
-# Tab Agent — خطة تنفيذ إضافة كروم
+# BrowseMate — خطة تنفيذ إضافة كروم
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -119,13 +119,13 @@ import { crx } from '@crxjs/vite-plugin';
 
 const manifest = {
   manifest_version: 3,
-  name: 'Tab Agent',
+  name: 'BrowseMate',
   version: '0.1.0',
   side_panel: { default_path: 'src/sidepanel/index.html' },
   background: { service_worker: 'src/background/index.ts', type: 'module' },
   permissions: ['sidePanel', 'tabs', 'tabGroups', 'storage', 'scripting', 'debugger', 'activeTab'],
   host_permissions: ['<all_urls>'],
-  action: { default_title: 'Tab Agent' },
+  action: { default_title: 'BrowseMate' },
   icons: { '128': 'src/assets/icon128.png' },
   web_accessible_resources: [
     { resources: ['src/content/*'], matches: ['<all_urls>'] },
@@ -164,7 +164,7 @@ chrome.runtime.onInstalled.addListener(() => {
 ```html
 <!doctype html>
 <html>
-  <head><meta charset="utf-8" /><title>Tab Agent</title></head>
+  <head><meta charset="utf-8" /><title>BrowseMate</title></head>
   <body><div id="app"></div><script type="module" src="/src/sidepanel/main.ts"></script></body>
 </html>
 ```
@@ -178,7 +178,7 @@ mount(App, { target: document.getElementById('app')! });
 
 `src/sidepanel/App.svelte` (مؤقت):
 ```svelte
-<main>Tab Agent — scaffold OK</main>
+<main>BrowseMate — scaffold OK</main>
 ```
 
 - [ ] **Step 2: إضافة أيقونة مؤقتة** — أي PNG 128×128 في `src/assets/icon128.png` (يُولَّد بأي صورة؛ يمكن placeholder).
