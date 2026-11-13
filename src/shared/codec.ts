@@ -18,17 +18,19 @@ function b64decode(b64: string): Uint8Array {
 async function gzipBytes(bytes: Uint8Array): Promise<Uint8Array> {
   const cs = new CompressionStream('gzip');
   const w = cs.writable.getWriter();
+  const readPromise = new Response(cs.readable).arrayBuffer(); // اقرأ بالتوازي مع الكتابة (منع backpressure)
   await w.write(bytes as unknown as BufferSource);
   await w.close();
-  return new Uint8Array(await new Response(cs.readable).arrayBuffer());
+  return new Uint8Array(await readPromise);
 }
 
 async function gunzipBytes(bytes: Uint8Array): Promise<Uint8Array> {
   const ds = new DecompressionStream('gzip');
   const w = ds.writable.getWriter();
+  const readPromise = new Response(ds.readable).arrayBuffer();
   await w.write(bytes as unknown as BufferSource);
   await w.close();
-  return new Uint8Array(await new Response(ds.readable).arrayBuffer());
+  return new Uint8Array(await readPromise);
 }
 
 export async function pack(text: string): Promise<string> {
