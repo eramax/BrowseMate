@@ -8,6 +8,10 @@ import { seedSkills } from './seed';
 import { getArtifact } from './artifacts';
 import { chromeKV } from '../shared/storage';
 import { validateSkill, buildSkillFromToolCalls } from './skills';
+import {
+  getSkills, getOrderedSkills, saveSkill as storeSkill, deleteSkill as storeDeleteSkill,
+  setOrder as storeSetOrder, saveSkillsBulk, syncNow, syncStatus, pullSkills,
+} from './skill-store';
 import { setLang } from '../shared/i18n';
 import type { PanelToWorker, WorkerToPanel, SkillFile } from '../shared/types';
 import './tools/page';
@@ -31,7 +35,7 @@ chrome.runtime.onInstalled.addListener(() => {
   chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch(console.error);
 });
 initLang();
-seedSkills().catch(() => {});
+pullSkills().then(() => seedSkills()).catch(() => {});
 
 async function initLang() {
   const s = await loadSettings();
@@ -40,7 +44,7 @@ async function initLang() {
 
 chrome.runtime.onConnect.addListener((p) => {
   if (p.name !== 'panel') return;
-  seedSkills().catch((e) => console.warn('seedSkills:', e));
+  pullSkills().then(() => seedSkills()).catch((e) => console.warn('skills init:', e));
   port = p;
   p.onDisconnect.addListener(() => { port = undefined; });
   p.onMessage.addListener((msg: PanelToWorker) => {
@@ -107,40 +111,38 @@ chrome.runtime.onMessage.addListener((msg: any, _s, send) => {
           break;
         }
         case 'list-skills': {
-          const all = (await chromeKV.get<Record<string, SkillFile>>('skills')) ?? {};
-          const skills = Object.values(all).sort(
-            (a, b) => (a.order ?? 1e9) - (b.order ?? 1e9) || a.name.localeCompare(b.name),
-          );
-          send({ ok: true, skills });
+          send({ ok: true, skills: await getOrderedSkills() });
           break;
         }
         case 'reorder-skills': {
-          const all = (await chromeKV.get<Record<string, SkillFile>>('skills')) ?? {};
-          const names: string[] = Array.isArray(msg.names) ? msg.names : [];
-          names.forEach((n, i) => { if (all[n]) all[n] = { ...all[n], order: i }; });
-          await chromeKV.set('skills', all);
+          await storeSetOrder(Array.isArray(msg.names) ? msg.names : []);
           send({ ok: true });
+          break;
+        }
+        case 'skills-sync': {
+          send({ ok: true, status: msg.now ? await syncNow() : await syncStatus() });
+          break;
+        }
+        case 'skills-pull': {
+          send({ ok: true, ...(await pullSkills()) });
           break;
         }
         case 'import-skill': {
           const err = validateSkill(msg.skill);
           if (err) { send({ ok: false, error: err }); break; }
-          const all = (await chromeKV.get<Record<string, SkillFile>>('skills')) ?? {};
-          all[msg.skill.name] = msg.skill;
-          await chromeKV.set('skills', all);
+          await storeSkill(msg.skill);
           send({ ok: true, name: msg.skill.name });
           break;
         }
         case 'update-skill': {
-          const all = (await chromeKV.get<Record<string, SkillFile>>('skills')) ?? {};
+          const all = await getSkills();
           const skill = all[msg.name];
           if (!skill) { send({ ok: false, error: 'مهارة غير موجودة' }); break; }
           const next = { ...skill, ...msg.patch, name: skill.name };
           if (msg.patch?.instructions !== undefined) next.seedRev = -1; // المستخدم عدّل التعليمات
           const err = validateSkill(next);
           if (err) { send({ ok: false, error: err }); break; }
-          all[msg.name] = next;
-          await chromeKV.set('skills', all);
+          await storeSkill(next);
           send({ ok: true });
           break;
         }
@@ -173,16 +175,12 @@ chrome.runtime.onMessage.addListener((msg: any, _s, send) => {
           if (!target?.toolCalls?.length) { send({ ok: false, error: 'لا توجد أدوات في هذه الرسالة' }); break; }
           const built = buildSkillFromToolCalls(msg.name, msg.description ?? '', target.toolCalls);
           if ('error' in built) { send({ ok: false, error: built.error }); break; }
-          const all = (await chromeKV.get<Record<string, SkillFile>>('skills')) ?? {};
-          all[built.name] = built;
-          await chromeKV.set('skills', all);
+          await storeSkill(built);
           send({ ok: true, skill: built });
           break;
         }
         case 'delete-skill': {
-          const all = (await chromeKV.get<Record<string, SkillFile>>('skills')) ?? {};
-          delete all[msg.name];
-          await chromeKV.set('skills', all);
+          await storeDeleteSkill(msg.name);
           send({ ok: true });
           break;
         }

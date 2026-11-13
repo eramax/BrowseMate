@@ -14,7 +14,6 @@
   let open = $state(false);
   let approvalMode = $state<'sensitive' | 'always' | 'never'>('sensitive');
   let skillsMsg = $state('');
-
   const filtered = $derived(
     model ? models.filter((m) => m.toLowerCase().includes(model.toLowerCase())) : models,
   );
@@ -32,7 +31,8 @@
     skillsBackup: 'نسخ احتياطي للمهارات',
     exportAll: '⤓ تصدير كل المهارات',
     importAll: '⇪ استيراد ملف مهارات',
-    skillsHint: 'ملف JSON واحد يضم كل المهارات (بما فيها الملفات المرفقة).',
+    syncNow: '↻ مزامنة الآن',
+    skillsHint: 'المهارات تُحفظ في chrome.storage.sync (مضغوطة) — ونسخة محلية فقط إذا كان sync غير متاح.',
   } : {
     baseUrl: 'Base URL', apiKey: 'API Key', model: 'Model',
     fetch: 'Fetch models', language: 'Language', save: 'Save', saved: 'Saved ✓',
@@ -47,7 +47,8 @@
     skillsBackup: 'Skills backup',
     exportAll: '⤓ Export all skills',
     importAll: '⇪ Import skills file',
-    skillsHint: 'One JSON file containing all skills (including attachments).',
+    syncNow: '↻ Sync now',
+    skillsHint: 'Skills live in chrome.storage.sync (compressed) — a local copy is used only when sync is unavailable.',
   });
 
   oninit();
@@ -59,6 +60,30 @@
     model = res.settings.model;
     approvalMode = res.settings.approvalMode ?? 'sensitive';
     if (baseUrl && apiKey) await fetchModels(true);
+    await refreshSyncStatus();
+  }
+
+  async function refreshSyncStatus() {
+    const res: any = await rpc('skills-sync', { now: false });
+    if (!res.ok) return;
+    const st = res.status;
+    const when = st.updatedAt ? new Date(st.updatedAt).toLocaleTimeString(lang === 'ar' ? 'ar' : 'en', { hour: '2-digit', minute: '2-digit' }) : '—';
+    skillsMsg = st.error
+      ? `⚠️ ${st.error}`
+      : lang === 'ar'
+        ? `${st.mode === 'sync' ? 'مزامنة مع حساب المتصفح' : 'نسخة محلية (sync غير متاح)'} — ${st.count} مهارة — ${when}`
+        : `${st.mode === 'sync' ? 'Synced with browser account' : 'Local fallback (sync unavailable)'} — ${st.count} skills — ${when}`;
+  }
+
+  async function syncNow() {
+    const res: any = await rpc('skills-sync', { now: true });
+    if (res.ok) {
+      const st = res.status;
+      skillsMsg = st.error
+        ? `⚠️ ${st.error}`
+        : lang === 'ar' ? `تمت المزامنة (${st.count} مهارة)` : `Synced (${st.count} skills)`;
+    }
+    await refreshSyncStatus();
   }
 
   async function selectModel(m: string) {
@@ -204,6 +229,7 @@
           <input type="file" accept=".json,application/json" style="display:none"
                  onchange={(e) => { importSkillsFile((e.currentTarget as HTMLInputElement).files?.[0]); (e.currentTarget as HTMLInputElement).value = ''; }} />
         </label>
+        <button class="mini" onclick={syncNow}>{L.syncNow}</button>
       </div>
       <div class="hint">{L.skillsHint}</div>
       {#if skillsMsg}<div class="hint" style="color:var(--ok)">{skillsMsg}</div>{/if}

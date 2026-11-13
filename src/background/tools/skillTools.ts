@@ -2,13 +2,13 @@
 import { z } from 'zod';
 import { register, getTool, allTools } from './registry';
 import { runSkill, validateSkill, generalizeSteps } from '../skills';
-import { chromeKV } from '../../shared/storage';
+import { getSkills, saveSkill as storeSkill, deleteSkill as storeDeleteSkill } from '../skill-store';
 import type { SkillFile, SkillStep } from '../../shared/types';
 
 const skillKV = {
-  async all(): Promise<Record<string, SkillFile>> { return (await chromeKV.get('skills')) ?? {}; },
-  async save(s: SkillFile) { const all = await this.all(); all[s.name] = s; await chromeKV.set('skills', all); },
-  async remove(name: string) { const all = await this.all(); delete all[name]; await chromeKV.set('skills', all); },
+  all: () => getSkills(),
+  save: (s: SkillFile) => storeSkill(s),
+  remove: (name: string) => storeDeleteSkill(name),
 };
 
 register({

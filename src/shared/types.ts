@@ -88,4 +88,5 @@ export interface SkillFile {
   version?: number;
   seedRev?: number; // -1 = عدّلها المستخدم فلا تُلمس عند الزرع
   order?: number; // ترتيب العرض في تبويب المهارات
+  updatedAt?: number; // آخر تعديل (للمزامنة)
 }

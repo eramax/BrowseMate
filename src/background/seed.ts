@@ -1,5 +1,4 @@
 // مهارات مبدئية تُزرع مرة واحدة عند أول تشغيل — لا تعيد إضافة ما حذفه المستخدم
-import { chromeKV } from '../shared/storage';
 import type { SkillFile } from '../shared/types';
 
 const SEED_VERSION = 7;
@@ -103,16 +102,17 @@ const SEEDS: SkillFile[] = [
 ];
 
 export async function seedSkills() {
-  const seeded = (await chromeKV.get<number>('skillsSeeded')) ?? 0;
+  const { getSeedRev, setSeedRev, saveSkillsBulk, getSkills } = await import('./skill-store');
+  const seeded = await getSeedRev();
   if (seeded >= SEED_VERSION) return;
-  const existing = (await chromeKV.get<Record<string, SkillFile>>('skills')) ?? {};
+  const existing = await getSkills();
+  const toSave: SkillFile[] = [];
   for (const s of SEEDS) {
     const cur = existing[s.name];
-    if (!cur) { existing[s.name] = { ...s, seedRev: SEED_VERSION, order: SEEDS.indexOf(s) }; continue; }
-    if (cur.seedRev === -1 || cur.seedRev === SEED_VERSION) continue; // عدّلها المستخدم أو محدثة
-    // ترقية مهارة مبدئية: حدّث التعليمات مع الحفاظ على الملف المرفق والمعاملات
-    existing[s.name] = { ...s, context: cur.context, params: cur.params, seedRev: SEED_VERSION };
+    if (!cur) { toSave.push({ ...s, seedRev: SEED_VERSION }); continue; }
+    if (cur.seedRev === -1 || cur.seedRev === SEED_VERSION) continue;
+    toSave.push({ ...s, context: cur.context, params: cur.params, seedRev: SEED_VERSION });
   }
-  await chromeKV.set('skills', existing);
-  await chromeKV.set('skillsSeeded', SEED_VERSION);
+  if (toSave.length) await saveSkillsBulk(toSave);
+  await setSeedRev(SEED_VERSION);
 }
