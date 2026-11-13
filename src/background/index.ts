@@ -4,6 +4,7 @@ import { listModels } from './llm';
 import { createSessionStore, MAX_MSGS_PER_SESSION } from './sessions';
 import { createApprovalManager } from './approvals';
 import { runChat, type RunHandle } from './agent';
+import { seedSkills } from './seed';
 import { chromeKV } from '../shared/storage';
 import { validateSkill } from './skills';
 import { setLang } from '../shared/i18n';
@@ -25,6 +26,7 @@ chrome.runtime.onInstalled.addListener(() => {
   chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch(console.error);
 });
 initLang();
+seedSkills().catch(() => {});
 
 async function initLang() {
   const s = await loadSettings();
