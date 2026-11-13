@@ -87,6 +87,8 @@ export async function runChat(deps: AgentDeps, sessionId: string, userText: stri
     const { approvalMode } = await loadSettings();
 
     const ctx: ToolContext = {
+      seenCalls: new Map<string, number>(),
+      callCount: { value: 0 },
       getActiveTab: deps.getActiveTab,
       emit: (e) => deps.emit(sessionId, e),
       signal: ac.signal,

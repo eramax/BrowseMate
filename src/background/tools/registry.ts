@@ -28,6 +28,22 @@ export function asAISDKTools(ctx: ToolContext, isPlanArmed: () => boolean): Reco
       description: t.description,
       inputSchema: t.schema,
       execute: async (args: any) => {
+        // حماية من الحلقات: نفس الأداة بنفس الوسائط مرتين = أوقف وأطلب تغيير النهج
+        const key = t.name + ':' + stableStringify(args);
+        const seen = ctx.seenCalls?.get(key) ?? 0;
+        if (seen >= 1) {
+          return {
+            error: 'REPEATED_IDENTICAL_CALL',
+            message: 'نفس الاستدعاء تكرر بنفس الوسائط — لا تعده. اقرأ الملف (site_read) أو غيّر النهج/الوسائط.',
+          };
+        }
+        ctx.seenCalls?.set(key, seen + 1);
+        if (ctx.callCount) {
+          ctx.callCount.value++;
+          if (ctx.callCount.value > 40) {
+            return { error: 'TOOL_BUDGET_EXCEEDED', message: 'تجاوزت 40 استدعاء أداة في تشغيل واحد. توقف واكتب ملخصاً أو اطلب توجيهاً.' };
+          }
+        }
         const ask = ctx.approvalMode === 'always' || (ctx.approvalMode === 'sensitive' && t.sensitive);
         if (ask && !isPlanArmed()) {
           const ok = await ctx.requestApproval(t.name, args);
@@ -38,4 +54,18 @@ export function asAISDKTools(ctx: ToolContext, isPlanArmed: () => boolean): Reco
     };
   }
   return out;
+}
+
+
+/** JSON مستقر لاستخدامه كمفتاح تكرار */
+function stableStringify(v: unknown): string {
+  try {
+    return JSON.stringify(v, (_k, val) =>
+      val && typeof val === 'object' && !Array.isArray(val)
+        ? Object.keys(val).sort().reduce((o: any, k) => ((o[k] = val[k]), o), {})
+        : val,
+    );
+  } catch {
+    return String(v);
+  }
 }

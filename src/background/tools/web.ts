@@ -2,6 +2,7 @@
 import { z } from 'zod';
 import { register } from './registry';
 import { renderSiteHtml, type SiteData } from '../site-template';
+import { renderTodoApp } from '../app-template';
 import { openPreview } from '../preview';
 import { chromeKV } from '../../shared/storage';
 import { getSite, saveSite, undoSite } from '../site-store';
@@ -56,6 +57,31 @@ register({
     const filename = (a.filename || 'index.html').replace(/[\\/:*?"<>|]+/g, '-').slice(0, 80);
     const result = await openPreview(String(a.html), filename);
     if (!result.error) await saveSite({ id: result.artifact.id, filename, html: String(a.html), version: 1, updatedAt: Date.now() }, false);
+    return result;
+  },
+});
+
+register({
+  name: 'render_app',
+  description:
+    'ينشئ تطبيق ويب جاهزاً ومُختبَراً (حالياً: todo list تفاعلي مع إضافة/إنجاز/حذف/تصفية/مسح + حفظ محلي + وضع داكن/فاتح) بملف HTML واحد. استخدمه بدل كتابة كود التطبيق يدوياً.',
+  sensitive: false,
+  schema: z.object({
+    kind: z.literal('todo'),
+    title: z.string().optional(),
+    subtitle: z.string().optional(),
+    placeholder: z.string().optional(),
+    theme: z.enum(['dark', 'light']).optional(),
+    accent: z.string().optional().describe('hex مثل #7c9cff'),
+    lang: z.enum(['ar', 'en']).optional(),
+    filename: z.string().optional(),
+  }),
+  execute: async (a) => {
+    const html = renderTodoApp(a);
+    const filename = a.filename || (a.lang === 'en' ? 'todo-app.html' : 'todo-app.html');
+    const result = await openPreview(html, filename);
+    if (result.artifact?.id)
+      await saveSite({ id: result.artifact.id, filename, html, version: 1, updatedAt: Date.now() }, false);
     return result;
   },
 });

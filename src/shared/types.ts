@@ -57,6 +57,10 @@ export interface ToolContext {
   getToolLog?: () => ToolCallInfo[];
   /** أدوات آخر تشغيل محفوظ في الجلسة (للطلب في دور لاحق) */
   getSessionToolLog?: () => Promise<ToolCallInfo[]>;
+  /** حماية من الحلقات: بصمات الاستدعاءات المتكررة */
+  seenCalls?: Map<string, number>;
+  /** عدد استدعاءات الأدوات في هذا التشغيل */
+  callCount?: { value: number };
 }
 
 export type ApprovalMode = 'sensitive' | 'always' | 'never';
