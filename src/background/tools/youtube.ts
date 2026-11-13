@@ -5,23 +5,33 @@ import { withPage } from '../inject';
 
 /** تعمل في MAIN world: تصل إلى ytInitialPlayerResponse وتجلب الترجمة بجلسة المتصفح الحقيقية */
 async function ytMainExtract() {
-  const pick = (tracks: any[]) =>
-    tracks.find((t) => t.languageCode === 'ar')
-    || tracks.find((t) => /^en/.test(t.languageCode || '') && t.kind !== 'asr')
-    || tracks.find((t) => /^en/.test(t.languageCode || ''))
-    || tracks[0];
+  // الترتيب: الترجمة اليدوية بلغة الصوت الأصلية ← أي يدوية ← التلقائية بلغة الصوت ← أي تلقائية
+  const pickOriginal = (tracks: any[], defaultLang: string) => {
+    const base = String(defaultLang || '').toLowerCase().split('-')[0];
+    const manual = tracks.filter((t) => t.kind !== 'asr');
+    const asr = tracks.filter((t) => t.kind === 'asr');
+    const match = (arr: any[]) => base && arr.find((t) => String(t.languageCode || '').toLowerCase().startsWith(base));
+    return match(manual) || manual[0] || match(asr) || asr[0] || tracks[0];
+  };
 
   let tracks: any[] | null = null;
-  try { tracks = (window as any).ytInitialPlayerResponse?.captions?.playerCaptionsTracklistRenderer?.captionTracks ?? null; } catch { /* ignore */ }
+  let defaultLang = '';
+  try {
+    const pr = (window as any).ytInitialPlayerResponse;
+    tracks = pr?.captions?.playerCaptionsTracklistRenderer?.captionTracks ?? null;
+    defaultLang = pr?.videoDetails?.defaultAudioLanguage ?? '';
+  } catch { /* ignore */ }
   if (!tracks?.length) {
     try {
       const p = document.querySelector('#movie_player') as any;
-      tracks = p?.getPlayerResponse?.()?.captions?.playerCaptionsTracklistRenderer?.captionTracks ?? null;
+      const pr = p?.getPlayerResponse?.();
+      tracks = pr?.captions?.playerCaptionsTracklistRenderer?.captionTracks ?? null;
+      defaultLang = pr?.videoDetails?.defaultAudioLanguage ?? defaultLang;
     } catch { /* ignore */ }
   }
   if (!tracks?.length) return { ok: false, error: 'NO_TRACKS' };
 
-  const tr = pick(tracks);
+  const tr = pickOriginal(tracks, defaultLang);
   try {
     const r = await fetch(tr.baseUrl + '&fmt=json3', { credentials: 'include' });
     if (!r.ok) return { ok: false, error: `FETCH_${r.status}` };
@@ -47,7 +57,7 @@ async function ytMainExtract() {
 register({
   name: 'youtube_transcript',
   description:
-    'يجلب النص الكامل (الترجمة) لفيديو يوتيوب المفتوح في التبويب النشط — يدوية وتلقائية ولغات متعددة. استخدمه لتلخيص الفيديو. إن لم يكن التبويب فيديو يوتيوب انتقل إليه أولاً بـ navigate.',
+    'يجلب النص الكامل (الترجمة الأصلية للفيديو) من التبويب النشط — يدوية وتلقائية. استخدمه لتلخيص الفيديو. إن لم يكن التبويب فيديو يوتيوب انتقل إليه أولاً بـ navigate.',
   sensitive: false,
   schema: z.object({}),
   execute: async (_a, ctx) => {

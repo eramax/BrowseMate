@@ -62,10 +62,10 @@
       } catch (e) {}
     }
     if (tracks && tracks.length) {
-      var pick = tracks.find(function (t) { return t.languageCode === 'ar'; })
-        || tracks.find(function (t) { return /^en/.test(t.languageCode || '') && t.kind !== 'asr'; })
-        || tracks.find(function (t) { return /^en/.test(t.languageCode || ''); })
-        || tracks[0];
+      // الترجمة الأصلية أولاً (لغة الصوت) — لا تفضّل العربية إن كان الفيديو إنجليزياً
+      var manual = tracks.filter(function (t) { return t.kind !== 'asr'; });
+      var asr = tracks.filter(function (t) { return t.kind === 'asr'; });
+      var pick = manual[0] || asr[0] || tracks[0];
       try {
         var res = await fetch(pick.baseUrl + '&fmt=json3', { credentials: 'include' });
         if (res.ok) {
