@@ -63,20 +63,33 @@
     // لوحة النص في الواجهة (المسار المعتمد في 2026 — player response لم يعد متاحاً)
     var segs = readSegs();
     if (!segs.length) {
-      var expand = Array.prototype.find.call(
+      // فكّ طي الوصف — اختر الزر المرئي فقط (يوجد "...more" مخفي أولاً)
+      var expand = Array.prototype.filter.call(
         document.querySelectorAll('#expand, tp-yt-paper-button#expand, ytd-text-inline-expander #expand'),
-        function (x) { return /more|المزيد|إظهار/i.test(x.textContent || ''); });
-      if (expand) expand.click();
-      await new Promise(function (r) { setTimeout(r, 300); });
+        function (x) { return x.offsetParent !== null; }
+      ).find(function (x) { return /more|المزيد|إظهار/i.test(x.textContent || ''); });
+      if (expand) {
+        expand.click();
+        await new Promise(function (r) { setTimeout(r, 600); });
+      }
 
-      var all = Array.prototype.slice.call(document.querySelectorAll('button, tp-yt-paper-button'));
-      var btn = all.filter(function (x) { return x.offsetParent !== null; }).find(function (x) {
-        var label = (x.getAttribute('aria-label') || '') + ' ' + (x.textContent || '');
-        return !/close|إغلاق|أغلق/i.test(label)
-          && /show transcript|transcript|إظهار النص|عرض النص|نص الفيديو|نسخ النص/i.test(label);
-      });
+      // قد يظهر زر النص بتأخير بعد فتح الوصف — انتظر ظهوره
+      function findBtn() {
+        return Array.prototype.slice.call(document.querySelectorAll('button, tp-yt-paper-button'))
+          .filter(function (x) { return x.offsetParent !== null; })
+          .find(function (x) {
+            var label = (x.getAttribute('aria-label') || '') + ' ' + (x.textContent || '');
+            return !/close|إغلاق|أغلق/i.test(label)
+              && /show transcript|transcript|إظهار النص|عرض النص|نص الفيديو|نسخ النص/i.test(label);
+          });
+      }
+      var btn = findBtn();
+      for (var t = 0; t < 12 && !btn; t++) {
+        await new Promise(function (r) { setTimeout(r, 250); });
+        btn = findBtn();
+      }
       if (!btn) {
-        return { error: 'NO_TRANSCRIPT', message: 'لم أجد زر "إظهار النص" في هذه الصفحة — قد لا توجد ترجمة لهذا الفيديو' };
+        return { error: 'NO_TRANSCRIPT', message: 'لم أجد زر "إظهار النص" — قد لا توجد ترجمة لهذا الفيديو' };
       }
       btn.click();
 
