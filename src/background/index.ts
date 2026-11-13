@@ -22,6 +22,7 @@ import './tools/pdf';
 import './tools/youtube';
 import './tools/cv';
 import './tools/doc';
+import './tools/web';
 import './tools/skillTools';
 
 const sessions = createSessionStore(chromeKV);

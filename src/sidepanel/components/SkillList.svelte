@@ -3,6 +3,7 @@
   import type { SkillFile } from '../../shared/types';
   import type { Lang } from '../../shared/i18n';
   import { rpc } from '../lib/port';
+  import { toSkillMd } from '../../shared/skill-md';
 
   let {
     skills, lang, run: runSkill, remove, refresh,
@@ -79,9 +80,9 @@
     }
   }
   function exportSkill(s: SkillFile) {
-    const url = URL.createObjectURL(new Blob([JSON.stringify(s, null, 2)], { type: 'application/json' }));
+    const url = URL.createObjectURL(new Blob([toSkillMd(s)], { type: 'text/markdown' }));
     const a = document.createElement('a');
-    a.href = url; a.download = `${s.name}.skill.json`; a.click();
+    a.href = url; a.download = `${s.name}.md`; a.click();
     URL.revokeObjectURL(url);
   }
 

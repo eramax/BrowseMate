@@ -1,6 +1,8 @@
 <script lang="ts">
   // الإعدادات داخل الـ panel — حفظ تلقائي + منتقي نماذج قابل للبحث
   import { rpc } from '../lib/port';
+import { fromSkillMd, toSkillMd } from '../../shared/skill-md';
+import { createZip, readZip } from '../../shared/zip';
   import type { Lang } from '../../shared/i18n';
 
   let { lang, setUiLang }: { lang: Lang; setUiLang: (l: Lang) => void } = $props();
@@ -32,7 +34,7 @@
     exportAll: '⤓ تصدير كل المهارات',
     importAll: '⇪ استيراد ملف مهارات',
     syncNow: '↻ مزامنة الآن',
-    skillsHint: 'المهارات تُحفظ في chrome.storage.sync (مضغوطة) — ونسخة محلية فقط إذا كان sync غير متاح.',
+    skillsHint: 'الصيغة الوحيدة SKILL.md (frontmatter + markdown). التصدير الجماعي ZIP يحتوي skills/<name>/SKILL.md.',
   } : {
     baseUrl: 'Base URL', apiKey: 'API Key', model: 'Model',
     fetch: 'Fetch models', language: 'Language', save: 'Save', saved: 'Saved ✓',
@@ -48,7 +50,7 @@
     exportAll: '⤓ Export all skills',
     importAll: '⇪ Import skills file',
     syncNow: '↻ Sync now',
-    skillsHint: 'Skills live in chrome.storage.sync (compressed) — a local copy is used only when sync is unavailable.',
+    skillsHint: 'Only SKILL.md (frontmatter + markdown). Bulk export is a ZIP of skills/<name>/SKILL.md.',
   });
 
   oninit();
@@ -111,36 +113,52 @@
     setTimeout(() => (saved = false), 1600);
   }
 
-  // ===== نسخ احتياطي للمهارات =====
+  // ===== نسخ احتياطي للمهارات (SKILL.md / ZIP فقط) =====
   async function exportAllSkills() {
     const res: any = await rpc('list-skills');
     if (!res.ok) { skillsMsg = res.error; return; }
-    const url = URL.createObjectURL(new Blob([JSON.stringify(res.skills, null, 2)], { type: 'application/json' }));
+    const files = (res.skills as any[]).map((s) => ({
+      path: `skills/${String(s.name).replace(/[\\/:*?"<>|]+/g, '-')}/SKILL.md`,
+      data: toSkillMd(s),
+    }));
+    const zip = createZip(files);
+    const url = URL.createObjectURL(new Blob([zip], { type: 'application/zip' }));
     const a = document.createElement('a');
     a.href = url;
-    a.download = 'browsemate-skills.json';
+    a.download = 'browsemate-skills.zip';
     a.click();
     URL.revokeObjectURL(url);
-    skillsMsg = lang === 'ar' ? `تم تصدير ${res.skills.length} مهارة` : `Exported ${res.skills.length} skills`;
+    skillsMsg = lang === 'ar' ? `تم تصدير ${files.length} مهارة (ZIP / SKILL.md)` : `Exported ${files.length} skills (ZIP / SKILL.md)`;
   }
 
   async function importSkillsFile(file: File | undefined) {
     if (!file) return;
     try {
-      const parsed = JSON.parse(await file.text());
-      const list: any[] = Array.isArray(parsed) ? parsed : [parsed];
+      const entries: Array<{ path: string; text: string }> = [];
+      if (file.name.toLowerCase().endsWith('.zip')) {
+        const zip = await readZip(new Uint8Array(await file.arrayBuffer()));
+        for (const e of zip) {
+          if (/\.md$/i.test(e.path) && !e.path.endsWith('/')) entries.push({ path: e.path, text: e.data });
+        }
+      } else {
+        entries.push({ path: file.name, text: await file.text() });
+      }
+      if (!entries.length) { skillsMsg = lang === 'ar' ? 'لا ملفات SKILL.md داخل الأرشيف' : 'No SKILL.md files in archive'; return; }
+
       let ok = 0;
       const errs: string[] = [];
-      for (const skill of list) {
-        const r: any = await rpc('import-skill', { skill });
+      for (const e of entries) {
+        const parsed = fromSkillMd(e.text);
+        if (parsed.error || !parsed.skill) { errs.push(`${e.path}: ${parsed.error ?? 'صيغة غير صالحة'}`); continue; }
+        const r: any = await rpc('import-skill', { skill: parsed.skill });
         if (r.ok) ok++;
-        else errs.push(`${skill?.name ?? '?'}: ${r.error}`);
+        else errs.push(`${parsed.skill.name}: ${r.error}`);
       }
       skillsMsg = lang === 'ar'
-        ? `تم استيراد ${ok}${errs.length ? ` — فشل ${errs.length}` : ''}`
-        : `Imported ${ok}${errs.length ? ` — ${errs.length} failed` : ''}`;
+        ? `تم استيراد ${ok}${errs.length ? ` — فشل ${errs.length}: ${errs[0]}` : ''}`
+        : `Imported ${ok}${errs.length ? ` — ${errs.length} failed: ${errs[0]}` : ''}`;
     } catch (e: any) {
-      skillsMsg = `JSON: ${e.message}`;
+      skillsMsg = `SKILL.md/ZIP: ${e.message}`;
     }
   }
 
@@ -226,7 +244,7 @@
         <button class="mini" onclick={exportAllSkills}>{L.exportAll}</button>
         <label class="mini" style="cursor:pointer">
           {L.importAll}
-          <input type="file" accept=".json,application/json" style="display:none"
+          <input type="file" accept=".md,.markdown,.zip,text/markdown,application/zip" style="display:none"
                  onchange={(e) => { importSkillsFile((e.currentTarget as HTMLInputElement).files?.[0]); (e.currentTarget as HTMLInputElement).value = ''; }} />
         </label>
         <button class="mini" onclick={syncNow}>{L.syncNow}</button>

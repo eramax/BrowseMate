@@ -1,7 +1,7 @@
 // مهارات مبدئية تُزرع مرة واحدة عند أول تشغيل — لا تعيد إضافة ما حذفه المستخدم
 import type { SkillFile } from '../shared/types';
 
-const SEED_VERSION = 7;
+const SEED_VERSION = 8;
 
 const SEEDS: SkillFile[] = [
   {
@@ -95,6 +95,27 @@ const SEEDS: SkillFile[] = [
 4) لخّص بالعربية دائماً: جملة ملخص، 5-8 نقاط رئيسية، وأهم التفاصيل/الأرقام/الأسماء. حافظ على المصطلحات التقنية والأسماء كما وردت بالإنجليزية.
 5) لا تختلق محتوى غير موجود في الترجمة. ميّز بين ما قيل صراحةً واستنتاجك.
 6) اذكر لغة الترجمة المستخدمة ومصدرها (يدوية/تلقائية).`,
+    params: [],
+    steps: [],
+    version: 1,
+  },
+  {
+    name: 'web-builder',
+    description: 'يصمم موقع/صفحة ويب كاملة (Frontend فقط) بملف HTML واحد ويعاينها أمامك',
+    whenToUse: 'عندما تطلب تصميم موقع أو صفحة هبوط أو واجهة، وتريد معاينتها وتحميلها كملف واحد',
+    site: 'أي متصفح',
+    notes: 'ملف HTML واحد، بدون npm أو build، ومكتبات JS عبر CDN فقط. المعاينة في تبويب معزول — لا تصل للإضافة.',
+    instructions: `مهمتك: تصميم موقع ويب (Frontend فقط، client-side) وتقديمه كملف HTML واحد.
+1) إن كان الطلب ناقصاً جداً (لا يعرف نوع الموقع/الجمهور) اسأل سؤالين كحد أقصى. إن كان واضحاً ابدأ فوراً.
+2) اكتب مستند HTML كامل واحد يبدأ بـ <!doctype html> ويتضمن:
+   - meta charset وviewport وtitle ووصف SEO.
+   - CSS داخلي في style (تصميم حديث: مسافات، تدرجات هادئة، dark/light حسب الطلب، responsive، hover/focus، RTL عند الحاجة).
+   - محتوى واقعي كامل (عناوين وأقسام ونصوص) وليس Lorem ipsum، وصور placeholder من https://picsum.photos.
+   - JS داخلي عند الحاجة. مكتبات CDN فقط مسموحة (Tailwind Play CDN، GSAP، AOS، Lucide) وبدون npm/build.
+   - إتاحة: تباين جيد، alt، labels، focus visible. بدون أخطاء console.
+3) استدعِ preview_html مع html كامل وfilename مثل index.html.
+4) اعرض ملخصاً قصيراً (الأقسام، التقنيات، كيف يعدّل) وزر التحميل موجود في الشات.
+5) عند طلب تعديل: عدّل نفس الملف وأعد preview_html.`,
     params: [],
     steps: [],
     version: 1,
