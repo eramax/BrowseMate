@@ -6,7 +6,9 @@ export function validateSkill(s: SkillFile): string | null {
   if (!s.name || !/^[\p{L}\p{N}][\p{L}\p{N} _-]*$/u.test(s.name) || s.name.length > 60)
     return 'name: حروف/أرقام/شرطة/مسافة فقط (حتى 60 حرفاً)';
   if (!s.description || s.description.trim().length < 3) return 'description: مطلوب (3 أحرف على الأقل)';
-  if (!Array.isArray(s.steps) || s.steps.length === 0) return 'steps: يجب أن تحتوي خطوة واحدة على الأقل';
+  const isPlaybook = Boolean(s.instructions?.trim());
+  if (!isPlaybook && (!Array.isArray(s.steps) || s.steps.length === 0))
+    return 'steps: يجب أن تحتوي خطوة واحدة على الأقل (أو instructions لمهارة Playbook)';
   for (const p of s.params ?? [])
     if (!/^[a-zA-Z0-9_-]+$/.test(p.name)) return `param name غير صالح: ${p.name}`;
   return null;

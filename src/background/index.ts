@@ -13,6 +13,7 @@ import './tools/page';
 import './tools/tabs';
 import './tools/misc';
 import './tools/inspect';
+import './tools/pdf';
 import './tools/skillTools';
 
 const sessions = createSessionStore(chromeKV);
@@ -113,6 +114,18 @@ chrome.runtime.onMessage.addListener((msg: any, _s, send) => {
           all[msg.skill.name] = msg.skill;
           await chromeKV.set('skills', all);
           send({ ok: true, name: msg.skill.name });
+          break;
+        }
+        case 'update-skill': {
+          const all = (await chromeKV.get<Record<string, SkillFile>>('skills')) ?? {};
+          const skill = all[msg.name];
+          if (!skill) { send({ ok: false, error: 'مهارة غير موجودة' }); break; }
+          const next = { ...skill, ...msg.patch, name: skill.name };
+          const err = validateSkill(next);
+          if (err) { send({ ok: false, error: err }); break; }
+          all[msg.name] = next;
+          await chromeKV.set('skills', all);
+          send({ ok: true });
           break;
         }
         case 'create-skill-from-message': {

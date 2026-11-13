@@ -80,6 +80,8 @@ export interface SkillFile {
   whenToUse?: string; // المشكلة/الحالة التي تُستخدم فيها
   site?: string; // النطاق أو الموقع المرتبط (اختياري)
   notes?: string; // قيود، تحذيرات، خطوات يدوية
+  context?: string; // Markdown مرفق (مثل السيرة الذاتية) يُمرر للنموذج
+  instructions?: string; // مهارة Playbook: تعليمات ينفذها النموذج بالأدوات (بدل خطوات ثابتة)
   params: SkillParam[];
   steps: SkillStep[];
   version?: number;

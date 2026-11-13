@@ -11,7 +11,7 @@ const manifest = {
   content_scripts: [
     { matches: ['<all_urls>'], js: ['src/content/page-tools.js'], run_at: 'document_idle' },
   ],
-  permissions: ['sidePanel', 'tabs', 'tabGroups', 'storage', 'scripting', 'debugger', 'activeTab'],
+  permissions: ['sidePanel', 'tabs', 'tabGroups', 'storage', 'scripting', 'debugger', 'downloads', 'activeTab'],
   host_permissions: ['<all_urls>'],
   action: { default_title: 'BrowseMate' },
   icons: { '128': 'src/assets/icon128.png' },

@@ -2,7 +2,7 @@
 import { chromeKV } from '../shared/storage';
 import type { SkillFile } from '../shared/types';
 
-const SEED_VERSION = 1;
+const SEED_VERSION = 3;
 
 const SEEDS: SkillFile[] = [
   {
@@ -44,13 +44,36 @@ const SEEDS: SkillFile[] = [
       { tool: 'read_page', args: {} },
     ],
   },
+  {
+    name: 'cv-tailor',
+    description: 'يولّد سيرة ذاتية PDF مخصصة للوظيفة المفتوحة في التبويب الحالي',
+    whenToUse: 'عندما تكون في صفحة وظيفة وتريد سيرة ذاتية متناسبة مع متطلباتها',
+    site: 'أي موقع توظيف',
+    notes: 'أرفق سيرتك الذاتية كملف Markdown من بطاقة المهارة (زر 📎). لا يختلق النموذج خبرات غير موجودة.',
+    instructions: `مهمتك: توليد سيرة ذاتية PDF مخصصة للوظيفة المعروضة في التبويب النشط. اكتب السيرة بالإنجليزية (English) دائماً ما لم يطلب المستخدم لغة أخرى صراحةً.
+1) استدعِ read_page لقراءة صفحة الوظيفة، واستخرج: Job title، Company، Requirements، Responsibilities، Keywords.
+2) اعتمد حصرياً على السيرة الذاتية الموجودة في context (Markdown). لا تخترع خبرات أو مهارات غير موجودة؛ أعد الترتيب والصياغة والإبراز فقط.
+3) أنشئ مستند HTML كامل A4 احترافياً بالإنجليزية (خطوط نظام، ألوان هادئة، عمود واحد، عناوين واضحة، ATS-friendly: عناوين قياسية مثل Summary / Skills / Experience / Education). أبرز المهارات والخبرات المطابقة لمتطلبات الوظيفة وأعد ترتيبها حسب الصلة، واستخدم كلمات الوظيفة المفتاحية.
+4) اجعل المحتوى في صفحة أو صفحتين كحد أقصى، بدون صور أو ألوان طباعة كثيفة، وبخط مقروء (10.5-11pt).
+5) استدعِ export_pdf مع filename مناسب مثل CV-Company-JobTitle.pdf.
+6) بعد النجاح اعرض ملخصاً قصيراً بالعربية: ما الذي أُبرز/أُعيد ترتيبه ولماذا، واسم الملف.
+إن كان context فارغاً اطلب من المستخدم رفع CV.md من بطاقة المهارة قبل المتابعة.`,
+    params: [],
+    steps: [],
+    version: 1,
+  },
 ];
 
 export async function seedSkills() {
   const seeded = (await chromeKV.get<number>('skillsSeeded')) ?? 0;
   if (seeded >= SEED_VERSION) return;
   const existing = (await chromeKV.get<Record<string, SkillFile>>('skills')) ?? {};
-  for (const s of SEEDS) if (!existing[s.name]) existing[s.name] = s;
+  for (const s of SEEDS) {
+    const cur = existing[s.name];
+    if (!cur) { existing[s.name] = s; continue; }
+    // تحديث إرشادات المهارات المبدئية فقط إن لم يرفق المستخدم سياقاً (لم يعدّلها)
+    if (s.instructions && !cur.context) existing[s.name] = { ...cur, instructions: s.instructions, notes: s.notes, whenToUse: s.whenToUse };
+  }
   await chromeKV.set('skills', existing);
   await chromeKV.set('skillsSeeded', SEED_VERSION);
 }

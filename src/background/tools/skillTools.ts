@@ -22,6 +22,22 @@ register({
   execute: async (a, ctx) => {
     const skill = (await skillKV.all())[a.name];
     if (!skill) return { error: `مهارة غير موجودة: ${a.name}` };
+
+    // مهارة Playbook: تعليمات ينفذها النموذج بالأدوات (مثل توليد CV مخصص)
+    if (skill.instructions?.trim()) {
+      return {
+        playbook: true,
+        skill: {
+          name: skill.name, description: skill.description, whenToUse: skill.whenToUse,
+          site: skill.site, notes: skill.notes, params: skill.params,
+        },
+        instructions: skill.instructions,
+        context: skill.context ?? '',
+        contextLabel: skill.context ? 'سياق/ملف مرفق بالمهارة' : 'لا يوجد سياق مرفق',
+        next: 'نفّذ هذه التعليمات الآن باستخدام الأدوات المتاحة. إن نقص سياق مهم (مثل السيرة الذاتية) اطلبه من المستخدم.',
+      };
+    }
+
     // موافقة مجمعة واحدة على كل الخطوات — تُتخطى في وضع "بدون سؤال"
     const planSteps = skill.steps.map((s) => (s.approval === true ? `${s.tool} ⚠` : s.tool));
     if (ctx.approvalMode !== 'never') {

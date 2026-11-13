@@ -202,12 +202,6 @@
     }
   }
 
-  async function saveSkillFromMessage(msgId: string, name: string, description: string) {
-    const res: any = await rpc('create-skill-from-message', { sessionId, msgId, name, description });
-    if (res.ok) await refreshSkills();
-    return { ok: !!res.ok, error: res.error };
-  }
-
   async function setLangUi(l: Lang) {
     lang = l;
     setI18nLang(l);
@@ -240,10 +234,9 @@
         sessions={sessionsList} currentId={sessionId} {settingsError} {stalled}
         send={send} stop={stop} approve={approve} retry={retry} openSettings={() => (tab = 'settings')}
         openSession={openSession} createSession={newSession} removeSession={deleteSession}
-        saveSkill={saveSkillFromMessage}
       />
     {:else if tab === 'skills'}
-      <SkillList {skills} {lang} run={runSkill} remove={deleteSkill} importJson={importSkill} />
+      <SkillList {skills} {lang} run={runSkill} remove={deleteSkill} importJson={importSkill} refresh={refreshSkills} />
     {:else}
       <SettingsView {lang} setUiLang={setLangUi} />
     {/if}
