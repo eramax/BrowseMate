@@ -1,7 +1,7 @@
 <script lang="ts">
   // BrowseMate — App الرئيسي: يملك Port والأحداث، العرض في مكوّنات
   import { openPanelPort, rpc } from './lib/port';
-  import { dict, setLang as setI18nLang, type Lang } from '../shared/i18n';
+  import { t, setLang as setI18nLang, type Lang } from '../shared/i18n';
   import type { ChatMessage, Session, ToolCallInfo } from '../shared/types';
   import type { SkillFile } from '../shared/types';
   import ChatView from './components/ChatView.svelte';
@@ -169,14 +169,12 @@
     document.documentElement.dir = l === 'ar' ? 'rtl' : 'ltr';
     await rpc('save-settings', { patch: { lang: l } });
   }
-
-  const T = $derived(dict[lang]);
 </script>
 
 <div class="app" {dir}>
   <div class="tabs" {dir}>
     {#each TABS as x}
-      <button class:active={tab === x.key} onclick={() => (tab = x.key)}>{T[x.k as keyof typeof T] as any}</button>
+      <button class:active={tab === x.key} onclick={() => (tab = x.key)}>{t(x.k)}</button>
     {/each}
   </div>
   <div class="views">

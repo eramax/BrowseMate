@@ -81,7 +81,7 @@ export async function runChat(deps: AgentDeps, sessionId: string, userText: stri
               deps.emit(sessionId, { type: 'approval-request', id: info.id, tool: 'plan', args: { steps: plan }, steps: plan }));
             if (!planArmed) full = full.replace(/::plan[\s\S]*?::endplan/, '> ⛔ لم توافق على الخطة.');
             else full = full.replace(/::plan[\s\S]*?::endplan/, '').trim();
-            deps.emit(sessionId, { type: 'delta', runId, text: '' }); // إشارة إعادة رسم
+            deps.emit(sessionId, { type: 'delta', runId, text: full });
           }
         }
         const shown = full.includes('::plan') ? full.slice(0, full.indexOf('::plan')) + '…' : full;
