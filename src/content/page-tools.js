@@ -48,63 +48,69 @@
     var titleEl = document.querySelector('h1 yt-formatted-string, h1.title');
     var title = titleEl ? titleEl.textContent.trim() : document.title;
     var join = function (segs) { return segs.join(' ').replace(/\s+/g, ' ').trim().slice(0, 20000); };
-
-    // 1) مسارات الترجمة من player response (بدون مفاتيح)
-    var tracks = null;
-    try { tracks = window.ytInitialPlayerResponse && window.ytInitialPlayerResponse.captions
-      && window.ytInitialPlayerResponse.captions.playerCaptionsTracklistRenderer
-      && window.ytInitialPlayerResponse.captions.playerCaptionsTracklistRenderer.captionTracks; } catch (e) {}
-    if (!tracks) {
-      try {
-        var pl = document.querySelector('#movie_player');
-        var pr = pl && pl.getPlayerResponse && pl.getPlayerResponse();
-        tracks = pr && pr.captions && pr.captions.playerCaptionsTracklistRenderer && pr.captions.playerCaptionsTracklistRenderer.captionTracks;
-      } catch (e) {}
-    }
-    if (tracks && tracks.length) {
-      // الترجمة الأصلية أولاً (لغة الصوت) — لا تفضّل العربية إن كان الفيديو إنجليزياً
-      var manual = tracks.filter(function (t) { return t.kind !== 'asr'; });
-      var asr = tracks.filter(function (t) { return t.kind === 'asr'; });
-      var pick = manual[0] || asr[0] || tracks[0];
-      try {
-        var res = await fetch(pick.baseUrl + '&fmt=json3', { credentials: 'include' });
-        if (res.ok) {
-          var data = await res.json();
-          var segs = (data.events || []).map(function (ev) {
-            return (ev.segs || []).map(function (s) { return s.utf8 || ''; }).join('');
-          }).filter(Boolean);
-          if (segs.length) {
-            return { videoId: vid, title: title, lang: pick.languageCode, source: 'captions', segments: segs, text: join(segs) };
-          }
-        }
-      } catch (e) {}
+    var SEG_SEL = 'transcript-segment-view-model, ytd-transcript-segment-renderer';
+    function readSegs() {
+      var seen = {};
+      var out = [];
+      document.querySelectorAll(SEG_SEL).forEach(function (e) {
+        var t = e.querySelector('span[role="text"], #segment-text, .segment-text');
+        var txt = t ? t.textContent.trim() : '';
+        if (txt && !seen[txt]) { seen[txt] = 1; out.push(txt); }
+      });
+      return out;
     }
 
-    // 2) لوحة النص في الواجهة (احتياطي موثوق)
-    var expand = Array.prototype.find.call(
-      document.querySelectorAll('#expand, tp-yt-paper-button#expand, ytd-text-inline-expander #expand'),
-      function (x) { return /more|المزيد|إظهار/i.test(x.textContent || ''); });
-    if (expand) expand.click();
-    await new Promise(function (r) { setTimeout(r, 400); });
-    var all = Array.prototype.slice.call(document.querySelectorAll('button, tp-yt-paper-button, ytd-button-renderer'));
-    var btn = all.find(function (x) {
-      return /transcript|النص|نص الفيديو|إظهار النص|عرض النص/i.test((x.getAttribute('aria-label') || '') + ' ' + (x.textContent || ''));
-    });
-    if (btn) btn.click();
-    for (var i = 0; i < 25; i++) {
-      var els = document.querySelectorAll('ytd-transcript-segment-renderer');
-      if (els.length) {
-        var segs2 = Array.prototype.map.call(els, function (e) {
-          var t = e.querySelector('#segment-text, .segment-text');
-          return t ? t.textContent.trim() : '';
-        }).filter(Boolean);
-        if (segs2.length) {
-          return { videoId: vid, title: title, lang: 'panel', source: 'panel', segments: segs2, text: join(segs2) };
-        }
+    // لوحة النص في الواجهة (المسار المعتمد في 2026 — player response لم يعد متاحاً)
+    var segs = readSegs();
+    if (!segs.length) {
+      var expand = Array.prototype.find.call(
+        document.querySelectorAll('#expand, tp-yt-paper-button#expand, ytd-text-inline-expander #expand'),
+        function (x) { return /more|المزيد|إظهار/i.test(x.textContent || ''); });
+      if (expand) expand.click();
+      await new Promise(function (r) { setTimeout(r, 300); });
+
+      var all = Array.prototype.slice.call(document.querySelectorAll('button, tp-yt-paper-button'));
+      var btn = all.filter(function (x) { return x.offsetParent !== null; }).find(function (x) {
+        var label = (x.getAttribute('aria-label') || '') + ' ' + (x.textContent || '');
+        return !/close|إغلاق|أغلق/i.test(label)
+          && /show transcript|transcript|إظهار النص|عرض النص|نص الفيديو|نسخ النص/i.test(label);
+      });
+      if (!btn) {
+        return { error: 'NO_TRANSCRIPT', message: 'لم أجد زر "إظهار النص" في هذه الصفحة — قد لا توجد ترجمة لهذا الفيديو' };
       }
-      await new Promise(function (r) { setTimeout(r, 200); });
+      btn.click();
+
+      for (var i = 0; i < 40; i++) {
+        await new Promise(function (r) { setTimeout(r, 250); });
+        segs = readSegs();
+        if (segs.length) break;
+      }
     }
-    return { error: 'NO_TRANSCRIPT', message: 'لا توجد ترجمة متاحة أو تعذر فتح لوحة النص لهذا الفيديو' };
+
+    // بعض الفيديوهات الطويلة تُحمّل المقاطع تدريجياً — مرّر اللوحة حتى النهاية واجمع
+    if (segs.length) {
+      var panel = document.querySelector('ytd-engagement-panel-section-list-renderer[target-id*="transcript"]')
+        || document.querySelector('ytd-transcript-renderer');
+      var sc = null;
+      if (panel) {
+        sc = Array.prototype.find.call(panel.querySelectorAll('*'), function (e) {
+          return e.scrollHeight > e.clientHeight + 40 && e.clientHeight > 80;
+        }) || panel;
+      }
+      var last = segs.length;
+      for (var s = 0; sc && s < 25; s++) {
+        sc.scrollTop = sc.scrollHeight;
+        await new Promise(function (r) { setTimeout(r, 220); });
+        segs = readSegs();
+        if (segs.length === last) break;
+        last = segs.length;
+      }
+    }
+
+    if (!segs.length) {
+      return { error: 'NO_TRANSCRIPT', message: 'لوحة النص فُتحت لكن لم تُقرأ أي مقاطع — الفيديو قد لا يحتوي ترجمة' };
+    }
+    return { videoId: vid, title: title, lang: 'panel', source: 'panel', segments: segs, text: join(segs) };
   }
 
   chrome.runtime.onMessage.addListener(function (msg, _s, send) {
