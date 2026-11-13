@@ -44,15 +44,25 @@ register({
 register({
   name: 'save_skill',
   description:
-    'يحفظ مهارة JSON بعد التحقق. عند طلب المستخدم حفظ إجراء كمهارة: استخرج تسلسل الأدوات والوسائط من المحادثة إلى { name (kebab-case), description, params:[{name,type}], steps:[{tool,args,approval?}] } — وسائط ثابتة وقيم متغيرة كـ {{param}} داخل النصوص. اعرض JSON للمستخدم للتأكيد قبل الاستدعاء.',
+    'يحفظ مهارة JSON بعد التحقق. لا تقل للمستخدم أن المهارة حُفظت إلا بعد نجاح هذه الأداة. استخرج تسلسل الأدوات والوسائط من المحادثة إلى { name, description, params:[{name,type}], steps:[{tool,args,approval?}] } — وسائط ثابتة وقيم متغيرة كـ {{param}} داخل النصوص. name: حروف/أرقام/شرطة/مسافة (يمكن أن يكون عربياً). اعرض JSON للمستخدم للتأكيد قبل الاستدعاء.',
   sensitive: false,
-  schema: z.object({ skill: z.unknown() }),
+  schema: z.object({
+    skill: z.union([z.unknown(), z.string()]),
+  }),
   execute: async (a) => {
-    const err = validateSkill(a.skill);
+    let raw = a.skill;
+    if (typeof raw === 'string') {
+      try { raw = JSON.parse(raw); } catch { return { error: 'skill ليست JSON صالحاً' }; }
+    }
+    if (!raw || typeof raw !== 'object') return { error: 'skill يجب أن تكون كائن JSON' };
+    // تطبيع الاسم (مسافات مكررة/شرطات زائدة)
+    const s: any = { ...raw };
+    if (typeof s.name === 'string') s.name = s.name.trim().replace(/\s+/g, ' ');
+    const err = validateSkill(s);
     if (err) return { error: err };
-    const skill = a.skill as SkillFile;
+    const skill = s as SkillFile;
     await skillKV.save(skill);
-    return { saved: skill.name, steps: skill.steps.length };
+    return { saved: skill.name, steps: skill.steps.length, visibleInSkillsTab: true };
   },
 });
 

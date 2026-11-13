@@ -3,11 +3,30 @@ import type { SkillFile } from '../shared/types';
 import { substitute, type Params } from '../shared/template';
 
 export function validateSkill(s: SkillFile): string | null {
-  if (!s.name || !/^[a-z0-9-]+$/.test(s.name)) return 'name: kebab-case فقط';
+  if (!s.name || !/^[\p{L}\p{N}][\p{L}\p{N} _-]*$/u.test(s.name) || s.name.length > 60)
+    return 'name: حروف/أرقام/شرطة/مسافة فقط (حتى 60 حرفاً)';
   if (!Array.isArray(s.steps) || s.steps.length === 0) return 'steps: يجب أن تحتوي خطوة واحدة على الأقل';
   for (const p of s.params ?? [])
     if (!/^[a-zA-Z0-9_-]+$/.test(p.name)) return `param name غير صالح: ${p.name}`;
   return null;
+}
+
+/** بناء مهارة حتمية من tool calls رسالة فعلية — بديل لا يعتمد على كلام النموذج */
+export function buildSkillFromToolCalls(
+  name: string,
+  description: string,
+  toolCalls: Array<{ name: string; args: unknown; status?: string }>,
+): SkillFile | { error: string } {
+  const META = new Set(['save_skill', 'list_skills', 'run_skill', 'delete_skill']);
+  const usable = toolCalls.filter((t) => !META.has(t.name) && (t.status ?? 'ok') === 'ok');
+  if (!usable.length) return { error: 'لا توجد أدوات ناجحة قابلة للتحويل إلى مهارة' };
+  const steps = usable.map((t) => ({
+    tool: t.name,
+    args: (t.args && typeof t.args === 'object' ? t.args : {}) as Record<string, unknown>,
+  }));
+  const skill: SkillFile = { name: name.trim(), description: description.trim() || `مهارة من ${usable.length} خطوة`, params: [], steps };
+  const err = validateSkill(skill);
+  return err ? { error: err } : skill;
 }
 
 export interface SkillRunDeps {

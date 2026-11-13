@@ -24,7 +24,8 @@ describe('skill engine', () => {
     expect(validateSkill(skill)).toBeNull();
     expect(validateSkill({ ...skill, steps: [] })).toMatch(/steps/);
     expect(validateSkill({ ...skill, params: [{ name: 'bad name!', type: 'string' }] })).toMatch(/name/);
-    expect(validateSkill({ ...skill, name: 'Not Kebab' })).toMatch(/name/);
+    expect(validateSkill({ ...skill, name: 'اسم عربي صالح' })).toBeNull(); // الأسماء العربية مسموحة
+    expect(validateSkill({ ...skill, name: 'bad!name' })).toMatch(/name/);
   });
   it('runs steps in order, substitutes params, aggregates results', async () => {
     const calls: any[] = [];

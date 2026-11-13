@@ -6,7 +6,7 @@ import { createApprovalManager } from './approvals';
 import { runChat, type RunHandle } from './agent';
 import { seedSkills } from './seed';
 import { chromeKV } from '../shared/storage';
-import { validateSkill } from './skills';
+import { validateSkill, buildSkillFromToolCalls } from './skills';
 import { setLang } from '../shared/i18n';
 import type { PanelToWorker, WorkerToPanel, SkillFile } from '../shared/types';
 import './tools/page';
@@ -35,6 +35,7 @@ async function initLang() {
 
 chrome.runtime.onConnect.addListener((p) => {
   if (p.name !== 'panel') return;
+  seedSkills().catch((e) => console.warn('seedSkills:', e));
   port = p;
   p.onDisconnect.addListener(() => { port = undefined; });
   p.onMessage.addListener((msg: PanelToWorker) => {
@@ -112,6 +113,18 @@ chrome.runtime.onMessage.addListener((msg: any, _s, send) => {
           all[msg.skill.name] = msg.skill;
           await chromeKV.set('skills', all);
           send({ ok: true, name: msg.skill.name });
+          break;
+        }
+        case 'create-skill-from-message': {
+          const session = await sessions.get(msg.sessionId);
+          const target = session?.messages.find((m) => m.id === msg.msgId);
+          if (!target?.toolCalls?.length) { send({ ok: false, error: 'لا توجد أدوات في هذه الرسالة' }); break; }
+          const built = buildSkillFromToolCalls(msg.name, msg.description ?? '', target.toolCalls);
+          if ('error' in built) { send({ ok: false, error: built.error }); break; }
+          const all = (await chromeKV.get<Record<string, SkillFile>>('skills')) ?? {};
+          all[built.name] = built;
+          await chromeKV.set('skills', all);
+          send({ ok: true, skill: built });
           break;
         }
         case 'delete-skill': {

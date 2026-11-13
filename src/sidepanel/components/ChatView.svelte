@@ -8,7 +8,7 @@
     messages, liveText, livePlan, toolCalls, busy, approvals, progress, lang,
     sessions, currentId, settingsError, stalled,
     send, stop, approve, retry, openSettings,
-    openSession, createSession, removeSession,
+    openSession, createSession, removeSession, saveSkill,
   }: {
     messages: ChatMessage[];
     liveText: string;
@@ -30,6 +30,7 @@
     openSession: (id: string) => void;
     createSession: () => void;
     removeSession: (id: string) => void;
+    saveSkill: (msgId: string, name: string, description: string) => Promise<{ ok: boolean; error?: string }>;
   } = $props();
 
   let text = $state('');
@@ -122,7 +123,7 @@
 
   <div class="msgs" bind:this={scroller}>
     {#each messages as m (m.id)}
-      <Message msg={m} />
+      <Message msg={m} {lang} canSaveSkill onSaveSkill={saveSkill} />
     {/each}
 
     {#if busy}
