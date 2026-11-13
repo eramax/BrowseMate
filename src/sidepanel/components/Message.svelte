@@ -5,10 +5,11 @@
   import { rpc } from '../lib/port';
   import type { ChatMessage } from '../../shared/types';
 
-  let { msg, lang }: { msg: ChatMessage; lang: 'ar' | 'en' } = $props();
+  let { msg, lang = 'en' }: { msg: ChatMessage; lang?: 'ar' | 'en' } = $props();
   let host = $state<HTMLElement>();
   let view: FlowView | undefined;
   const dir = $derived(textDir(msg.content));
+  const planLabel = $derived(lang === 'ar' ? 'الخطة' : 'Plan');
   const L = $derived(lang === 'ar'
     ? { download: '⬇ تحميل', print: '🖨 طباعة / PDF' }
     : { download: '⬇ Download', print: '🖨 Print / PDF' });
@@ -41,7 +42,7 @@
     <div class="who"><span class="logo">B</span> BrowseMate</div>
     {#if msg.plan?.length}
       <div class="plan-card">
-        <b>الخطة</b>
+        <b>{planLabel}</b>
         <ol style="margin:0;padding-inline-start:18px">{#each msg.plan as s}<li>{s}</li>{/each}</ol>
       </div>
     {/if}

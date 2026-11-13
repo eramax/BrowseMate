@@ -15,7 +15,7 @@
   ];
 
   let tab = $state<Tab>('chat');
-  let lang = $state<Lang>('ar');
+  let lang = $state<Lang>('en');
   let sessionId = $state('');
   let messages = $state<ChatMessage[]>([]);
   let sessionsList = $state<Array<Pick<Session, 'id' | 'title' | 'updatedAt'>>>([]);

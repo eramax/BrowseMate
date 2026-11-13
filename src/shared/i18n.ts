@@ -25,7 +25,7 @@ export const dict = {
 
 export type Dict = typeof dict.ar;
 
-const pref: { lang: Lang } = { lang: 'ar' };
+const pref: { lang: Lang } = { lang: 'en' };
 export function setLang(l: Lang) { pref.lang = l; }
 export function t(key: string): string {
   let cur: unknown = dict[pref.lang];

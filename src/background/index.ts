@@ -39,6 +39,12 @@ initLang();
 pullSkills().then(() => seedSkills()).catch(() => {});
 
 async function initLang() {
+  // الافتراضي الجديد: الإنجليزية — يُطبَّق مرة واحدة على من لم يغيّر اللغة يدوياً
+  if (!(await chromeKV.get<boolean>('langDefaultEnApplied'))) {
+    const s = await loadSettings();
+    if (s.lang === 'ar') await saveSettings({ lang: 'en' });
+    await chromeKV.set('langDefaultEnApplied', true);
+  }
   const s = await loadSettings();
   setLang(s.lang);
 }
@@ -88,14 +94,14 @@ chrome.runtime.onMessage.addListener((msg: any, _s, send) => {
         case 'ensure-session': {
           const first = (await sessions.list())[0];
           if (first) { send({ ok: true, id: first.id }); break; }
-          const s = await sessions.create('جلسة جديدة');
+          const s = await sessions.create('New chat');
           send({ ok: true, id: s.id });
           break;
         }
         case 'get-session': send({ ok: true, session: await sessions.get(msg.id) }); break;
         case 'list-sessions': send({ ok: true, sessions: await sessions.list() }); break;
         case 'new-session': {
-          const s = await sessions.create(msg.title || 'جلسة جديدة');
+          const s = await sessions.create(msg.title || 'New chat');
           activeSessionId = s.id;
           send({ ok: true, session: s });
           break;
