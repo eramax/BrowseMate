@@ -5,7 +5,8 @@ export interface Artifact {
   id: string;
   filename: string;
   mime: string;
-  html: string;
+  html?: string;
+  dataUrl?: string; // ملفات ثنائية (PDF)
   ts: number;
 }
 export interface ArtifactMeta {
@@ -23,6 +24,15 @@ export async function saveArtifact(filename: string, html: string, mime = 'text/
   await chromeKV.set(PREFIX + id, { id, filename, mime, html, ts: Date.now() } as Artifact);
   await prune();
   return { id, filename, mime, sizeKb: Math.max(1, Math.round(html.length / 1024)) };
+}
+
+/** حفظ PDF (base64 من CDP) كـ artifact لعرض زر تحميل في الشات */
+export async function savePdfArtifact(filename: string, base64: string): Promise<ArtifactMeta> {
+  const id = crypto.randomUUID();
+  const dataUrl = 'data:application/pdf;base64,' + base64;
+  await chromeKV.set(PREFIX + id, { id, filename, mime: 'application/pdf', dataUrl, ts: Date.now() } as Artifact);
+  await prune();
+  return { id, filename, mime: 'application/pdf', sizeKb: Math.max(1, Math.round((base64.length * 3) / 4 / 1024)) };
 }
 
 export async function getArtifact(id: string): Promise<Artifact | undefined> {

@@ -1,6 +1,7 @@
 // تصدير PDF — HTML يُفتح في تبويب معزول ثم Page.printToPDF عبر CDP (دعم عربي كامل من محرك كروم)
 import { z } from 'zod';
 import { register } from './registry';
+import { savePdfArtifact } from '../artifacts';
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -51,13 +52,14 @@ register({
       const base64 = res?.data as string;
       if (!base64) return { error: 'فشل توليد PDF من الصفحة' };
       const dataUrl = 'data:application/pdf;base64,' + base64;
+      const artifact = await savePdfArtifact(filename, base64);
       try {
         const downloadId = await chrome.downloads.download({ url: dataUrl, filename, saveAs: false });
-        return { downloaded: true, filename, downloadId, sizeKb: Math.round((base64.length * 3) / 4 / 1024) };
+        return { downloaded: true, filename, downloadId, artifact, note: 'تم التنزيل أيضاً إلى مجلد التنزيلات، وزر التحميل ظاهر في الشات.' };
       } catch {
         // بديل: افتح PDF في تبويب ليحفظه المستخدم من عارض كروم
         await chrome.tabs.create({ url: dataUrl, active: true });
-        return { downloaded: false, openedInTab: true, filename, note: 'اضغط تنزيل في عارض PDF' };
+        return { downloaded: false, openedInTab: true, filename, artifact, note: 'افتح عارض PDF واضغط تنزيل' };
       }
     } catch (e: any) {
       return { error: 'PDF_FAILED', message: `تعذر توليد PDF: ${e?.message ?? e}` };

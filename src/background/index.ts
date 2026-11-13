@@ -138,12 +138,19 @@ chrome.runtime.onMessage.addListener((msg: any, _s, send) => {
           const a = await getArtifact(msg.id);
           if (!a) { send({ ok: false, error: 'المستند غير موجود (انتهت صلاحيته)' }); break; }
           if (msg.type === 'download-artifact') {
-            send({ ok: true, url: 'data:text/html;charset=utf-8,' + encodeURIComponent(a.html), filename: a.filename });
+            const url = a.dataUrl ?? ('data:text/html;charset=utf-8,' + encodeURIComponent(a.html ?? ''));
+            send({ ok: true, url, filename: a.filename });
+            break;
+          }
+          if (a.dataUrl) {
+            // PDF جاهز: افتحه في عارض كروم
+            await chrome.tabs.create({ url: a.dataUrl, active: true });
+            send({ ok: true, printed: false, opened: true });
             break;
           }
           // طباعة: افتح المستند مع #print فتُفتح نافذة الطباعة تلقائياً (حفظ كـ PDF) — بدون debugger
           await chrome.tabs.create({
-            url: 'data:text/html;charset=utf-8,' + encodeURIComponent(a.html) + '#print',
+            url: 'data:text/html;charset=utf-8,' + encodeURIComponent(a.html ?? '') + '#print',
             active: true,
           });
           send({ ok: true, printed: true });

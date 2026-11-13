@@ -157,11 +157,14 @@ export async function runChat(deps: AgentDeps, sessionId: string, userText: stri
     // ===== رد احتياطي: النموذج أنهى التشغيل بلا نص (استنفاد خطوات/موديل يعيد reasoning فقط) =====
     if (!full.trim()) {
       full = await fallbackAnswer(model, history, toolLog, sessionId, deps).catch(() => '');
-      if (!full.trim()) {
-        full = toolLog.length
+    }
+    // ضمان عدم وجود رد فارغ أبداً — خصوصاً بعد إنشاء ملفات
+    if (!full.trim()) {
+      full = artifacts.length
+        ? `تم إنشاء الملف: ${artifacts.map((a) => a.filename).join('، ')} — استخدم زر التحميل أدناه.`
+        : toolLog.length
           ? `نفّذت ${toolLog.length} خطوة (${[...new Set(toolLog.map((t) => t.name))].join(', ')}) لكن النموذج لم يُرجع نصًا نهائيًا. جرّب إعادة المحاولة أو نموذجًا آخر.`
           : 'لم يُرجع النموذج أي نص. جرّب إعادة المحاولة أو نموذجًا آخر.';
-      }
     }
 
     await deps.sessions.patchMessage(sessionId, draftId, {
