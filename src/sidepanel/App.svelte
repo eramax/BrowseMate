@@ -210,16 +210,6 @@
 </script>
 
 <div class="app" {dir}>
-  <div class="topbar">
-    <div class="brand"><span class="logo">B</span> BrowseMate</div>
-    <div class="spacer"></div>
-    {#if busy}
-      <span class="pill" style="font-size:10.5px;color:var(--accent);background:var(--accent-soft);padding:4px 8px;border-radius:99px">
-        {lang === 'ar' ? 'يعمل…' : 'Working…'}
-      </span>
-    {/if}
-  </div>
-
   <div class="tabs">
     {#each TABS as x}
       <button class:active={tab === x.key} onclick={() => (tab = x.key)}>{t(x.k)}</button>
