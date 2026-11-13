@@ -55,16 +55,24 @@
           <button class="mini" onclick={() => remove(s.name)}>{L.del}</button>
         </div>
         <div class="desc">{s.description}</div>
+        {#if s.whenToUse}<div class="desc">🎯 {s.whenToUse}</div>{/if}
+        {#if s.site}<div class="desc">🌐 {s.site}</div>{/if}
+        {#if s.notes}<div class="desc">📌 {s.notes}</div>{/if}
+        {#if s.params?.length}<div class="desc">{L.params}: {s.params.map((p) => p.name).join(', ')}</div>{/if}
         {#if expanded === s.name}
           <div style="display:flex; gap:6px; flex-wrap:wrap; margin-top:4px">
             {#each s.params as p (p.name)}
-              <input
-                placeholder={p.name}
-                bind:value={paramValues[s.name][p.name]}
-                style="width:110px;padding:6px 8px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:12px"
-              />
+              <div style="display:flex; flex-direction:column; gap:2px">
+                <input
+                  placeholder={p.example ? `${p.name} — ${p.example}` : p.name}
+                  title={p.description ?? p.name}
+                  bind:value={paramValues[s.name][p.name]}
+                  style="width:130px;padding:6px 8px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:12px"
+                />
+                {#if p.description}<span class="hint">{p.description}</span>{/if}
+              </div>
             {/each}
-            <button class="mini" style="color:var(--accent);border-color:var(--accent)" onclick={() => run(s.name, paramValues[s.name])}>▶ {L.run}</button>
+            <button class="mini" style="color:var(--accent);border-color:var(--accent);align-self:flex-start" onclick={() => run(s.name, paramValues[s.name])}>▶ {L.run}</button>
           </div>
         {/if}
       </div>

@@ -65,15 +65,22 @@ export interface SkillStep {
   tool: string;
   args: Record<string, unknown>;
   approval?: boolean;
+  note?: string; // لماذا هذه الخطوة / ماذا تتوقع
 }
 export interface SkillParam {
   name: string;
   type: 'string' | 'number';
   required?: boolean;
+  description?: string; // ماذا يمثل هذا المعامل
+  example?: string;
 }
 export interface SkillFile {
-  name: string; // kebab-case
+  name: string; // اسم حر (عربي مسموح)
   description: string;
+  whenToUse?: string; // المشكلة/الحالة التي تُستخدم فيها
+  site?: string; // النطاق أو الموقع المرتبط (اختياري)
+  notes?: string; // قيود، تحذيرات، خطوات يدوية
   params: SkillParam[];
   steps: SkillStep[];
+  version?: number;
 }

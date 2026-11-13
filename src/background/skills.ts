@@ -1,14 +1,41 @@
 // محرك تشغيل المهارات — حتمي: خطوات = أداة + وسائط + {{param}} (المواصفة §5)
-import type { SkillFile } from '../shared/types';
+import type { SkillFile, SkillStep } from '../shared/types';
 import { substitute, type Params } from '../shared/template';
 
 export function validateSkill(s: SkillFile): string | null {
   if (!s.name || !/^[\p{L}\p{N}][\p{L}\p{N} _-]*$/u.test(s.name) || s.name.length > 60)
     return 'name: حروف/أرقام/شرطة/مسافة فقط (حتى 60 حرفاً)';
+  if (!s.description || s.description.trim().length < 3) return 'description: مطلوب (3 أحرف على الأقل)';
   if (!Array.isArray(s.steps) || s.steps.length === 0) return 'steps: يجب أن تحتوي خطوة واحدة على الأقل';
   for (const p of s.params ?? [])
     if (!/^[a-zA-Z0-9_-]+$/.test(p.name)) return `param name غير صالح: ${p.name}`;
   return null;
+}
+
+/** تعميم مهارة: استبدال قيم محددة (موقع/رابط/كلمة بحث) بمعاملات {{param}} */
+export function generalizeSteps(
+  steps: SkillStep[],
+  replacements: Array<{ param: string; value: string }>,
+): SkillStep[] {
+  // الأطول أولاً حتى لا يُستبدل جزء من قيمة أطول
+  const reps = replacements
+    .filter((r) => r.param && r.value && r.value.length >= 2)
+    .sort((a, b) => b.value.length - a.value.length);
+  const walk = (v: unknown): unknown => {
+    if (typeof v === 'string') {
+      let s = v;
+      for (const r of reps) s = s.split(r.value).join(`{{${r.param}}}`);
+      return s;
+    }
+    if (Array.isArray(v)) return v.map(walk);
+    if (v && typeof v === 'object') {
+      const out: Record<string, unknown> = {};
+      for (const [k, val] of Object.entries(v as Record<string, unknown>)) out[k] = walk(val);
+      return out;
+    }
+    return v;
+  };
+  return steps.map((st) => ({ ...st, args: walk(st.args) as Record<string, unknown> }));
 }
 
 /** بناء مهارة حتمية من tool calls رسالة فعلية — بديل لا يعتمد على كلام النموذج */

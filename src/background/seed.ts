@@ -8,7 +8,10 @@ const SEEDS: SkillFile[] = [
   {
     name: 'compare-prices',
     description: 'يقارن سعر منتج بين متجرين (جارير وإكسترا) ويعرض الفروق',
-    params: [{ name: 'model', type: 'string', required: true }],
+    whenToUse: 'عند البحث عن أفضل سعر لمنتج قبل الشراء',
+    site: 'jarir.com, extra.com',
+    notes: 'الأسعار تتغير؛ النتيجة قراءة لحظية من الصفحة',
+    params: [{ name: 'model', type: 'string', required: true, description: 'اسم المنتج', example: 'OnePlus 16' }],
     steps: [
       { tool: 'navigate', args: { url: 'https://www.jarir.com/sa-en/catalogsearch/result/?q={{model}}' } },
       { tool: 'read_page', args: {} },
@@ -19,7 +22,10 @@ const SEEDS: SkillFile[] = [
   {
     name: 'site-audit',
     description: 'يفحص صفحة: أخطاء console، طلبات الشبكة، ولقطة شاشة',
-    params: [{ name: 'url', type: 'string', required: true }],
+    whenToUse: 'قبل نشر موقع أو عند التحقق من أعطال صفحة معينة',
+    site: 'أي موقع',
+    notes: 'الصفحات الداخلية مثل chrome:// لا يمكن فحصها',
+    params: [{ name: 'url', type: 'string', required: true, description: 'رابط الصفحة', example: 'https://example.com' }],
     steps: [
       { tool: 'navigate', args: { url: '{{url}}' } },
       { tool: 'inspect_code', args: {} },
@@ -30,7 +36,9 @@ const SEEDS: SkillFile[] = [
   {
     name: 'youtube-brief',
     description: 'يبحث في يوتيوب عن موضوع ويلخص أول النتائج',
-    params: [{ name: 'q', type: 'string', required: true }],
+    whenToUse: 'عندما تريد ملخصاً سريعاً لمحتوى يوتيوب حول موضوع',
+    site: 'youtube.com',
+    params: [{ name: 'q', type: 'string', required: true, description: 'كلمة البحث', example: 'شرح React' }],
     steps: [
       { tool: 'navigate', args: { url: 'https://www.youtube.com/results?search_query={{q}}' } },
       { tool: 'read_page', args: {} },

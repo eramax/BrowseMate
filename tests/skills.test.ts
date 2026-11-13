@@ -1,10 +1,10 @@
 import { describe, it, expect } from 'vitest';
-import { runSkill, validateSkill, buildSkillFromToolCalls } from '../src/background/skills';
+import { runSkill, validateSkill, buildSkillFromToolCalls, generalizeSteps } from '../src/background/skills';
 import type { SkillFile } from '../src/shared/types';
 
 const skill: SkillFile = {
   name: 'test-skill',
-  description: 'd',
+  description: 'وصف تجريبي',
   params: [{ name: 'q', type: 'string', required: true }],
   steps: [
     { tool: 'navigate', args: { url: 'https://x.com/?q={{q}}' } },
@@ -98,5 +98,25 @@ describe('buildSkillFromToolCalls', () => {
       { name: 'navigate', args: {}, status: 'error' },
     ]);
     expect('error' in r).toBe(true);
+  });
+});
+
+describe('generalizeSteps', () => {
+  it('replaces concrete values with {{param}} placeholders (longest first)', () => {
+    const steps = [
+      { tool: 'navigate', args: { url: 'https://github.com/ripienaar/free-for-dev/commits' } },
+      { tool: 'read_page', args: {} },
+      { tool: 'navigate', args: { url: 'https://github.com/search?q=ripienaar/free-for-dev' } },
+    ];
+    const out = generalizeSteps(steps, [
+      { param: 'repo', value: 'ripienaar/free-for-dev' },
+      { param: 'url', value: 'https://github.com/ripienaar/free-for-dev/commits' },
+    ]);
+    expect(out[0].args.url).toBe('{{url}}');
+    expect(out[2].args.url).toBe('https://github.com/search?q={{repo}}');
+  });
+  it('leaves args untouched with no replacements', () => {
+    const steps = [{ tool: 'x', args: { a: 'b' } }];
+    expect(generalizeSteps(steps, [])).toEqual(steps);
   });
 });
