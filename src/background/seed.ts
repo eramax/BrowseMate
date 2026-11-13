@@ -1,7 +1,7 @@
 // مهارات مبدئية تُزرع مرة واحدة عند أول تشغيل — لا تعيد إضافة ما حذفه المستخدم
 import type { SkillFile } from '../shared/types';
 
-const SEED_VERSION = 8;
+const SEED_VERSION = 10;
 
 const SEEDS: SkillFile[] = [
   {
@@ -101,21 +101,17 @@ const SEEDS: SkillFile[] = [
   },
   {
     name: 'web-builder',
-    description: 'يصمم موقع/صفحة ويب كاملة (Frontend فقط) بملف HTML واحد ويعاينها أمامك',
-    whenToUse: 'عندما تطلب تصميم موقع أو صفحة هبوط أو واجهة، وتريد معاينتها وتحميلها كملف واحد',
+    description: 'يصمم موقع/صفحة ويب كاملة (Frontend فقط) بملف HTML واحد ويعاينها ويعدّلها بـ diff',
+    whenToUse: 'عندما تطلب تصميم موقع أو صفحة هبوط أو واجهة، وتريد معاينتها وتعديلها وتحميلها كملف واحد',
     site: 'أي متصفح',
-    notes: 'ملف HTML واحد، بدون npm أو build، ومكتبات JS عبر CDN فقط. المعاينة في تبويب معزول — لا تصل للإضافة.',
-    instructions: `مهمتك: تصميم موقع ويب (Frontend فقط، client-side) وتقديمه كملف HTML واحد.
-1) إن كان الطلب ناقصاً جداً (لا يعرف نوع الموقع/الجمهور) اسأل سؤالين كحد أقصى. إن كان واضحاً ابدأ فوراً.
-2) اكتب مستند HTML كامل واحد يبدأ بـ <!doctype html> ويتضمن:
-   - meta charset وviewport وtitle ووصف SEO.
-   - CSS داخلي في style (تصميم حديث: مسافات، تدرجات هادئة، dark/light حسب الطلب، responsive، hover/focus، RTL عند الحاجة).
-   - محتوى واقعي كامل (عناوين وأقسام ونصوص) وليس Lorem ipsum، وصور placeholder من https://picsum.photos.
-   - JS داخلي عند الحاجة. مكتبات CDN فقط مسموحة (Tailwind Play CDN، GSAP، AOS، Lucide) وبدون npm/build.
-   - إتاحة: تباين جيد، alt، labels، focus visible. بدون أخطاء console.
-3) استدعِ preview_html مع html كامل وfilename مثل index.html.
-4) اعرض ملخصاً قصيراً (الأقسام، التقنيات، كيف يعدّل) وزر التحميل موجود في الشات.
-5) عند طلب تعديل: عدّل نفس الملف وأعد preview_html.`,
+    notes: 'ملف HTML واحد، بدون npm/build. التعديلات diff دقيقة — لا تعد كتابة الملف كاملاً.',
+    instructions: `مهمتك: تصميم موقع ويب (Frontend فقط) وتقديمه كملف HTML واحد.
+1) البداية: استدعِ render_site ببيانات منظمة (brand, theme, accent, nav, sections: hero/features/about/pricing/testimonials/faq/gallery/contact/cta). محتوى واقعي كامل، صور picsum.photos.
+2) بعد كل معاينة استدعِ preview_diagnostics. إن وُجدت أخطاء فأصلحها وأعد المعاينة (حتى مرتين).
+3) للتعديلات: لا تعد توليد الموقع. استدعِ site_read مرة لرؤية النص الحرفي، ثم site_edit بتعديلات diff [{oldText,newText}] — استخدم سياقاً كافياً ليكون oldText فريداً. يمكن عدة تعديلات في نداء واحد (كلها أو لا شيء). بعد النجاح تحقق بـ preview_diagnostics.
+4) للتصاميم المخصصة جداً فقط استخدم preview_html، ويمكن تعديلها بنفس site_edit.
+5) عند الخطأ: site_undo للتراجع عن آخر تعديل.
+6) اعرض ملخصاً قصيراً فقط؛ زر التحميل يظهر في الشات.`,
     params: [],
     steps: [],
     version: 1,

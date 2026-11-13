@@ -20,7 +20,11 @@ const PREFIX = 'artifact:';
 const MAX = 6; // إبقاء آخر 6 فقط (حصة التخزين)
 
 export async function saveArtifact(filename: string, html: string, mime = 'text/html'): Promise<ArtifactMeta> {
-  const id = crypto.randomUUID();
+  return putArtifact(crypto.randomUUID(), filename, html, mime);
+}
+
+/** تحديث/إنشاء artifact بمعرف ثابت — يحافظ على زر التحميل نفسه عبر التعديلات */
+export async function putArtifact(id: string, filename: string, html: string, mime = 'text/html'): Promise<ArtifactMeta> {
   await chromeKV.set(PREFIX + id, { id, filename, mime, html, ts: Date.now() } as Artifact);
   await prune();
   return { id, filename, mime, sizeKb: Math.max(1, Math.round(html.length / 1024)) };
