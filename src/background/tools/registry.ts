@@ -34,7 +34,7 @@ export function asAISDKTools(ctx: ToolContext, isPlanArmed: () => boolean): Reco
         if (seen >= 1) {
           return {
             error: 'REPEATED_IDENTICAL_CALL',
-            message: 'نفس الاستدعاء تكرر بنفس الوسائط — لا تعده. اقرأ الملف (ws_read أو site_read) أو غيّر النهج/الوسائط.',
+            message: 'نفس الاستدعاء تكرر بنفس الوسائط — لا تعده. اقرأ الملف (ws_read أو site_read) ثم عدّل بـ edit، أو غيّر النهج/الوسائط.',
           };
         }
         ctx.seenCalls?.set(key, seen + 1);

@@ -32,3 +32,32 @@ export function applyEdits(html: string, edits: Edit[]): EditResult {
   }
   return { ok: true, html: cur, applied: edits.length };
 }
+
+/** أداة edit المفردة (oldString → newString) — نفس نمط OpenCode/وكلاء التحرير */
+export function editOnce(
+  text: string,
+  oldString: string,
+  newString: string,
+  replaceAll = false,
+): EditResult {
+  if (!oldString) return { ok: false, error: 'oldString مطلوب', failedIndex: 0 };
+  if (oldString === newString) return { ok: false, error: 'oldString وnewString متطابقان — لا يوجد تغيير', failedIndex: 0 };
+  const count = text.split(oldString).length - 1;
+  if (count === 0)
+    return {
+      ok: false,
+      failedIndex: 0,
+      error: 'لم أجد oldString في الملف. اقرأ الملف بـ ws_read (أو site_read) واستخدم نصاً مطابقاً حرفياً بما فيه المسافات.',
+    };
+  if (count > 1 && !replaceAll)
+    return {
+      ok: false,
+      failedIndex: 0,
+      error: `oldString يتكرر ${count} مرات. أضف سياقاً أكبر ليكون فريداً أو استخدم replaceAll:true.`,
+    };
+  return {
+    ok: true,
+    html: replaceAll ? text.split(oldString).join(newString) : text.replace(oldString, newString),
+    applied: 1,
+  };
+}

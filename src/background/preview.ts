@@ -32,7 +32,7 @@ export async function openPreview(html: string, filename: string, existingId?: s
       error: 'HTML غير صالح — حُفظ الملف لكن لم تُفتح المعاينة',
       issues: fixed.fatal,
       repairs: fixed.repairs,
-      note: 'أصلح HTML (خصوصاً <title> و<body>) عبر ws_read/ws_patch أو site_read/site_edit ثم أعد المحاولة.',
+      note: 'أصلح HTML (خصوصاً <title> و<body>) عبر ws_read + edit (أو ws_patch) ثم أعد المحاولة.',
     };
   }
   html = fixed.html;
@@ -45,7 +45,7 @@ export async function openPreview(html: string, filename: string, existingId?: s
       error: 'JavaScript غير صالح — حُفظ الملف لكن لم تُفتح المعاينة',
       issues: jsErrors,
       repairs: fixed.repairs.length ? fixed.repairs : undefined,
-      note: 'استخدم ws_read (أو site_read) لقراءة الملف ثم ws_patch (أو site_edit) لإصلاح السطر المذكور.',
+      note: 'استخدم ws_read لقراءة الملف ثم edit (أو ws_patch) لإصلاح السطر المذكور.',
     };
   }
   await chromeKV

@@ -3,11 +3,12 @@
 import { z } from 'zod';
 import { register } from './registry';
 import { openPreview } from '../preview';
-import { applyEdits, type Edit } from '../site-edit';
+import { applyEdits, editOnce, type Edit } from '../site-edit';
 import { checkInlineScripts, checkInlineScriptsDetailed } from '../js-check';
 import { workspace as ws, composeHtml, safePath } from '../workspace';
 import { saveArtifact, saveBinaryArtifact } from '../artifacts';
 import { createZip } from '../../shared/zip';
+import type { ToolContext } from '../../shared/types';
 
 function snapshot() {
   return ws.listFiles().then((files) => ({
@@ -115,10 +116,77 @@ register({
   },
 });
 
+/** يكتب الملف بعد التعديل، ويفحص JS فوراً، ويمنع الحلقات التي لا تُحدث تقدماً. */
+async function commitFile(path: string, next: string, ctx: ToolContext, applied: number) {
+  await ws.writeFile(path, next);
+  const complete = !path.endsWith('.html') || /<\/html>/i.test(next);
+
+  if (path.endsWith('.html')) {
+    const detailed = checkInlineScriptsDetailed(next);
+    if (detailed.length) {
+      const fingerprint = detailed.map((i) => `${i.script}:${i.message}`).join('|');
+      const prev = ctx.lastPatchError?.get(path);
+      ctx.lastPatchError?.set(path, fingerprint);
+      const issues = checkInlineScripts(next);
+      if (prev === fingerprint) {
+        return {
+          error: 'NO_PROGRESS',
+          message:
+            'نفس خطأ JavaScript تكرر بعد التعديل. توقف عن تعديل الحرف الواحد: احذف دالة escape واستخدم document.createElement + textContent لبيانات المستخدم، أو استبدل الدالة كاملة بالنمط الصحيح.',
+          issues,
+          complete,
+          tail: next.slice(-160),
+        };
+      }
+      return {
+        error: 'JavaScript ما زال غير صالح بعد التعديل',
+        issues,
+        hint: 'أصلح سبب الخطأ كاملاً، لا الحرف فقط. إن كان الخطأ في دالة escape فاحذفها واستخدم textContent.',
+        complete,
+        tail: next.slice(-160),
+      };
+    }
+    ctx.lastPatchError?.delete(path);
+  }
+
+  return {
+    patched: path,
+    applied,
+    bytes: next.length,
+    complete,
+    tail: next.slice(-160),
+  };
+}
+
+register({
+  name: 'edit',
+  description:
+    'يعدّل ملفاً بتعديل دقيق (oldString → newString) — نفس نمط أداة edit في OpenCode وأغلب الوكلاء. اقرأ الملف بـ ws_read أولاً. يجب أن يطابق oldString النص حرفياً ويكون فريداً، أو استخدم replaceAll:true. هذه هي الأداة الأساسية للتعديل؛ لا تعد كتابة الملف كاملاً.',
+  sensitive: false,
+  schema: z.object({
+    path: z.string().describe('مسار الملف'),
+    oldString: z.string().describe('النص القديم بالحرف (مع سياق كافٍ ليكون فريداً)'),
+    newString: z.string().describe('النص الجديد'),
+    replaceAll: z.boolean().optional().describe('استبدل كل التكرارات'),
+  }),
+  execute: async (a, ctx) => {
+    try {
+      const path = safePath(a.path);
+      const content = await ws.readFile(path);
+      if (content === undefined) return { error: `الملف غير موجود: ${path}`, ...(await snapshot()) };
+      const r = editOnce(content, a.oldString, a.newString, a.replaceAll);
+      if (!r.ok) return { error: r.error, failedIndex: r.failedIndex, hint: 'اقرأ الملف بـ ws_read ثم أعد المحاولة بنص مطابق حرفياً.' };
+      return await commitFile(path, r.html, ctx, 1);
+    } catch (e) {
+      return err(e);
+    }
+  },
+});
+
 register({
   name: 'ws_patch',
   description:
-    'يعدّل ملفاً بتعديلات diff دقيقة (oldText → newText) بدون إعادة كتابة الملف. كل التعديلات تُطبق أو لا شيء. اقرأ الملف بـ ws_read أولاً؛ استخدم سياقاً كافياً ليكون oldText فريداً.',
+    'يعدّل ملفاً بعدة تعديلات diff في نداء واحد (oldText → newText). كل التعديلات تُطبق أو لا شيء. فضّل edit للتعديل المفرد؛ استخدم ws_patch فقط عندما تحتاج عدة تعديلات مستقلة.',
   sensitive: false,
   schema: z.object({
     path: z.string().describe('مسار الملف'),
@@ -135,45 +203,7 @@ register({
       if (content === undefined) return { error: `الملف غير موجود: ${path}`, ...(await snapshot()) };
       const r = applyEdits(content, a.edits as Edit[]);
       if (!r.ok) return { error: r.error, failedIndex: r.failedIndex, hint: 'اقرأ الملف بـ ws_read ثم أعد المحاولة بنص مطابق حرفياً.' };
-      await ws.writeFile(path, r.html);
-      const complete = !path.endsWith('.html') || /<\/html>/i.test(r.html);
-
-      // تحقق فوري: لا تترك النموذج يكرر تعديلات لا تُحدث تقدماً على نفس الخطأ.
-      if (path.endsWith('.html')) {
-        const detailed = checkInlineScriptsDetailed(r.html);
-        if (detailed.length) {
-          const fingerprint = detailed.map((i) => `${i.script}:${i.message}`).join('|');
-          const prev = ctx.lastPatchError?.get(path);
-          ctx.lastPatchError?.set(path, fingerprint);
-          const issues = checkInlineScripts(r.html);
-          if (prev === fingerprint) {
-            return {
-              error: 'NO_PROGRESS',
-              message:
-                'نفس خطأ JavaScript تكرر بعد التعديل. توقف عن تعديل الحرف الواحد: احذف دالة escape واستخدم document.createElement + textContent لبيانات المستخدم، أو استبدل الدالة كاملة بالنمط الصحيح.',
-              issues,
-              complete,
-              tail: r.html.slice(-160),
-            };
-          }
-          return {
-            error: 'JavaScript ما زال غير صالح بعد التعديل',
-            issues,
-            hint: 'أصلح سبب الخطأ كاملاً، لا الحرف فقط. إن كان الخطأ في دالة escape فاحذفها واستخدم textContent.',
-            complete,
-            tail: r.html.slice(-160),
-          };
-        }
-        ctx.lastPatchError?.delete(path);
-      }
-
-      return {
-        patched: path,
-        applied: r.applied,
-        bytes: r.html.length,
-        complete,
-        tail: r.html.slice(-160),
-      };
+      return await commitFile(path, r.html, ctx, r.applied);
     } catch (e) {
       return err(e);
     }
