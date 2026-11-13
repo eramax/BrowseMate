@@ -22,10 +22,12 @@ register({
   execute: async (a, ctx) => {
     const skill = (await skillKV.all())[a.name];
     if (!skill) return { error: `مهارة غير موجودة: ${a.name}` };
-    // موافقة مجمعة واحدة على كل الخطوات (المواصفة §5: ضمن الدفعة، approval:true معلَّمة فقط)
+    // موافقة مجمعة واحدة على كل الخطوات — تُتخطى في وضع "بدون سؤال"
     const planSteps = skill.steps.map((s) => (s.approval === true ? `${s.tool} ⚠` : s.tool));
-    const ok = await ctx.requestApproval(`run_skill:${a.name}`, { params: a.params ?? {} }, planSteps);
-    if (!ok) return { error: 'REFUSED_BY_USER', message: 'ألغى المستخدم' };
+    if (ctx.approvalMode !== 'never') {
+      const ok = await ctx.requestApproval(`run_skill:${a.name}`, { params: a.params ?? {} }, planSteps);
+      if (!ok) return { error: 'REFUSED_BY_USER', message: 'ألغى المستخدم' };
+    }
     return {
       ...(await runSkill(skill, a.params ?? {}, {
         getTool,

@@ -3,7 +3,7 @@ import { loadSettings, saveSettings } from './settings';
 import { listModels } from './llm';
 import { createSessionStore, MAX_MSGS_PER_SESSION } from './sessions';
 import { createApprovalManager } from './approvals';
-import { runChat } from './agent';
+import { runChat, type RunHandle } from './agent';
 import { chromeKV } from '../shared/storage';
 import { validateSkill } from './skills';
 import { setLang } from '../shared/i18n';
@@ -16,7 +16,7 @@ import './tools/skillTools';
 
 const sessions = createSessionStore(chromeKV);
 const approvals = createApprovalManager();
-const runs = new Map<string, AbortController>();
+const runs = new Map<string, RunHandle>();
 
 let port: chrome.runtime.Port | undefined;
 let activeSessionId = '';
@@ -44,7 +44,7 @@ chrome.runtime.onConnect.addListener((p) => {
       approvals.resolve(msg.id, msg.approved);
     } else if (msg.type === 'stop') {
       approvals.rejectAll(); // لا تترك أداة معلقة على موافقة لن تأتي
-      for (const ac of runs.values()) ac.abort();
+      for (const r of runs.values()) r.ac.abort();
     } else if (msg.type === 'session-switch') {
       activeSessionId = msg.sessionId;
     }
@@ -120,6 +120,9 @@ chrome.runtime.onMessage.addListener((msg: any, _s, send) => {
           break;
         }
         case 'max-msgs': send({ ok: true, max: MAX_MSGS_PER_SESSION }); break;
+        case 'run-active':
+          send({ ok: true, active: [...runs.values()].some((r) => r.sessionId === msg.sessionId) });
+          break;
         default: send({ ok: false, error: `unknown rpc: ${msg?.type}` });
       }
     } catch (e: any) {

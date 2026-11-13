@@ -12,6 +12,7 @@
   let notice = $state('');
   let saved = $state(false);
   let open = $state(false);
+  let approvalMode = $state<'sensitive' | 'always' | 'never'>('sensitive');
 
   const filtered = $derived(
     model ? models.filter((m) => m.toLowerCase().includes(model.toLowerCase())) : models,
@@ -22,12 +23,22 @@
     fillFirst: 'أكمل Base URL وAPI Key أولاً', select: 'اختر أو اكتب معرف النموذج',
     autosave: 'يُحفظ تلقائياً على جهازك فقط — بدون backend',
     privacy: 'المفتاح لا يغادر جهازك إلا إلى مزودك.',
+    perms: 'الصلاحيات',
+    permSensitive: 'اسأل قبل الإجراءات الحساسة (موصى به)',
+    permAlways: 'اسأل عن كل إجراء',
+    permNever: 'بدون سؤال — تحكم كامل تلقائي',
+    permsHint: 'يشمل التنقل، الإغلاق، النقر، الملء، والحذف.',
   } : {
     baseUrl: 'Base URL', apiKey: 'API Key', model: 'Model',
     fetch: 'Fetch models', language: 'Language', save: 'Save', saved: 'Saved ✓',
     fillFirst: 'Fill Base URL and API Key first', select: 'Pick or type a model id',
     autosave: 'Auto-saved locally — no backend',
     privacy: 'Your key never leaves your device except to your provider.',
+    perms: 'Permissions',
+    permSensitive: 'Ask before sensitive actions (recommended)',
+    permAlways: 'Ask for every action',
+    permNever: 'No prompts — full auto control',
+    permsHint: 'Covers navigation, closing, clicking, filling and deletion.',
   });
 
   oninit();
@@ -37,6 +48,7 @@
     baseUrl = res.settings.baseUrl;
     apiKey = res.settings.apiKey;
     model = res.settings.model;
+    approvalMode = res.settings.approvalMode ?? 'sensitive';
     if (baseUrl && apiKey) await fetchModels(true);
   }
 
@@ -56,6 +68,13 @@
   function autosave() {
     clearTimeout(saveTimer);
     saveTimer = setTimeout(saveAll, 450);
+  }
+
+  async function setMode(m: 'sensitive' | 'always' | 'never') {
+    approvalMode = m;
+    await rpc('save-settings', { patch: { approvalMode: m } });
+    saved = true;
+    setTimeout(() => (saved = false), 1600);
   }
 
   async function fetchModels(silent = false) {
@@ -108,6 +127,22 @@
       </div>
       <div class="hint">{#if models.length}{filtered.length}/{models.length} · {L.fetch}{:else}{L.select}{/if}</div>
       <button class="mini" style="width:fit-content;margin-top:2px" onclick={() => fetchModels()}>⇩ {L.fetch}</button>
+    </div>
+
+    <div class="field">
+      <label>{L.perms}</label>
+      <div class="seg" style="width:100%">
+        <button class:active={approvalMode === 'sensitive'} onclick={() => setMode('sensitive')} title={L.permSensitive}>
+          {lang === 'ar' ? 'حساس فقط' : 'Sensitive'}
+        </button>
+        <button class:active={approvalMode === 'always'} onclick={() => setMode('always')} title={L.permAlways}>
+          {lang === 'ar' ? 'الكل' : 'All'}
+        </button>
+        <button class:active={approvalMode === 'never'} onclick={() => setMode('never')} title={L.permNever}>
+          {lang === 'ar' ? 'بدون سؤال' : 'None'}
+        </button>
+      </div>
+      <div class="hint">{L.permsHint}</div>
     </div>
 
     <div class="field">

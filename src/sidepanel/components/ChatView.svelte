@@ -6,7 +6,7 @@
 
   let {
     messages, liveText, livePlan, toolCalls, busy, approvals, progress, lang,
-    sessions, currentId, settingsError,
+    sessions, currentId, settingsError, stalled,
     send, stop, approve, retry, openSettings,
     openSession, createSession, removeSession,
   }: {
@@ -21,6 +21,7 @@
     sessions: Array<{ id: string; title: string; updatedAt: number }>;
     currentId: string;
     settingsError: boolean;
+    stalled: boolean;
     send: (text: string) => void;
     stop: () => void;
     approve: (id: string, ok: boolean) => void;
@@ -42,6 +43,7 @@
     approve: 'موافقة', refuse: 'رفض', approveAll: 'موافقة على الكل',
     working: 'يعمل', running: 'ينفذ', settings: 'أكمل إعدادات النموذج للمتابعة',
     openSettings: 'فتح الإعدادات', noSessions: 'لا جلسات', newSession: 'جلسة جديدة',
+    stalled: 'توقف التنفيذ قبل الاكتمال (انقطاع الخدمة) — يمكنك إعادة المحاولة',
   } : {
     placeholder: 'Ask anything… e.g. summarize this page',
     stop: 'Stop', retry: 'Retry', plan: 'Declared plan',
@@ -49,6 +51,7 @@
     approve: 'Approve', refuse: 'Refuse', approveAll: 'Approve all',
     working: 'Working', running: 'Running', settings: 'Complete model settings to continue',
     openSettings: 'Open settings', noSessions: 'No sessions', newSession: 'New session',
+    stalled: 'The run stopped before finishing (connection lost) — you can retry',
   });
 
   const currentTitle = $derived(sessions.find((s) => s.id === currentId)?.title ?? L.newSession);
@@ -107,6 +110,13 @@
     <div class="banner" dir={lang === 'ar' ? 'rtl' : 'ltr'}>
       <span>⚠️ {L.settings}</span>
       <button class="mini" onclick={openSettings}>{L.openSettings}</button>
+    </div>
+  {/if}
+
+  {#if stalled}
+    <div class="banner" dir={lang === 'ar' ? 'rtl' : 'ltr'}>
+      <span>⏹️ {L.stalled}</span>
+      <button class="mini" onclick={retry}>↻ {L.retry}</button>
     </div>
   {/if}
 

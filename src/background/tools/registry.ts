@@ -20,7 +20,7 @@ export function register(t: Omit<RegisteredTool, 'jsonSchema'> & { jsonSchema?: 
 export const getTool = (name: string) => tools.get(name);
 export const allTools = () => [...tools.values()];
 
-/** بناء أدوات AI SDK مع بوابة الموافقة للأدوات الحساسة + تخطيها عند تسليح الخطة المجمعة */
+/** بناء أدوات AI SDK — بوابة الموافقة تحترم وضع الصلاحيات + تسليح الخطة المجمعة */
 export function asAISDKTools(ctx: ToolContext, isPlanArmed: () => boolean): Record<string, any> {
   const out: Record<string, any> = {};
   for (const t of allTools()) {
@@ -28,7 +28,8 @@ export function asAISDKTools(ctx: ToolContext, isPlanArmed: () => boolean): Reco
       description: t.description,
       inputSchema: t.schema,
       execute: async (args: any) => {
-        if (t.sensitive && !isPlanArmed()) {
+        const ask = ctx.approvalMode === 'always' || (ctx.approvalMode === 'sensitive' && t.sensitive);
+        if (ask && !isPlanArmed()) {
           const ok = await ctx.requestApproval(t.name, args);
           if (!ok) return { error: 'REFUSED_BY_USER', message: 'المستخدم رفض هذا الإجراء الحساس — أعد التخطيط أو اسأل.' };
         }

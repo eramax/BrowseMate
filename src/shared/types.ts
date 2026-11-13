@@ -50,7 +50,11 @@ export interface ToolContext {
   emit: (evt: WorkerToPanel) => void;
   requestApproval: (tool: string, args: unknown, steps?: string[]) => Promise<boolean>;
   signal?: AbortSignal;
+  /** وضع الصلاحيات: sensitive = اسأل عن الحساس فقط، always = اسأل دائمًا، never = بدون سؤال */
+  approvalMode: ApprovalMode;
 }
+
+export type ApprovalMode = 'sensitive' | 'always' | 'never';
 
 // ===== ملف مهارة (JSON واحد قابل للتصدير/الاستيراد) =====
 export interface SkillStep {

@@ -6,9 +6,10 @@ export interface Settings {
   apiKey: string;
   model: string;
   lang: 'ar' | 'en';
+  approvalMode: 'sensitive' | 'always' | 'never';
 }
 
-const DEFAULTS: Settings = { baseUrl: '', apiKey: '', model: '', lang: 'ar' };
+const DEFAULTS: Settings = { baseUrl: '', apiKey: '', model: '', lang: 'ar', approvalMode: 'sensitive' };
 
 export async function loadSettings(): Promise<Settings> {
   return { ...DEFAULTS, ...(await chromeKV.get<Partial<Settings>>('settings')) };

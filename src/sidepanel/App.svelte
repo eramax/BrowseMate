@@ -28,19 +28,25 @@
   let approvals = $state<Array<{ id: string; tool: string; args: unknown; steps?: string[] }>>([]);
   let progress = $state('');
   let settingsError = $state(false);
+  let stalled = $state(false);
   let lastUserText = $state('');
   let ackTimer: ReturnType<typeof setTimeout> | undefined;
+  let watchdog: ReturnType<typeof setInterval> | undefined;
 
   const dir = $derived(lang === 'ar' ? 'rtl' : 'ltr');
 
   // ===== Port (إعادة اتصال تلقائية + resync) =====
-  const port = openPanelPort(handleEvent, () => { if (sessionId) loadSession(sessionId); });
+  const port = openPanelPort(handleEvent, () => {
+    // SW أُعيد تشغيله: أعد مزامنة الجلسة وتحقق هل التشغيل ما زال حياً
+    if (sessionId) loadSession(sessionId);
+    if (busy) checkAlive();
+  });
 
   function handleEvent(e: any) {
     switch (e.type) {
       case 'chat-started':
         clearTimeout(ackTimer);
-        busy = true; liveText = ''; livePlan = []; toolCalls = [];
+        busy = true; stalled = false; liveText = ''; livePlan = []; toolCalls = [];
         break;
       case 'delta':
         busy = true; liveText = e.text;
@@ -66,6 +72,7 @@
       case 'done':
       case 'error': {
         clearTimeout(ackTimer);
+        stopWatchdog();
         busy = false; approvals = []; progress = ''; livePlan = []; toolCalls = []; liveText = '';
         if (e.type === 'error') {
           if (e.code === 'SETTINGS_MISSING') settingsError = true;
@@ -91,7 +98,12 @@
   async function loadSession(id: string) {
     if (!id) return;
     const res: any = await rpc('get-session', { id });
-    if (res.ok && res.session) messages = res.session.messages;
+    if (res.ok && res.session) {
+      // إخفاء مسودات فارغة قديمة (بقايا انقطاع) — لا فقاعات فارغة في الشات
+      messages = (res.session.messages as ChatMessage[]).filter(
+        (m) => m.role !== 'assistant' || m.content.trim() || m.toolCalls?.length,
+      );
+    }
   }
   async function refreshSessions() {
     const res: any = await rpc('list-sessions');
@@ -106,7 +118,7 @@
   // ===== أوامر الشات =====
   function send(text: string) {
     lastUserText = text;
-    settingsError = false;
+    settingsError = false; stalled = false;
     // عرض فوري لرسالتك قبل أي اتصال (optimistic) — SW يحفظها أيضاً قبل الـ LLM
     messages = [...messages, { id: crypto.randomUUID(), role: 'user', content: text, ts: Date.now() }];
     busy = true; liveText = ''; livePlan = []; toolCalls = [];
@@ -115,6 +127,7 @@
     ackTimer = setTimeout(() => {
       if (busy && !liveText && !toolCalls.length) { busy = false; console.warn('BrowseMate: no response from worker'); }
     }, 12000);
+    startWatchdog();
   }
   function stop() { port.send({ type: 'stop' }); }
   function approve(id: string, ok: boolean) {
@@ -122,6 +135,27 @@
     port.send({ type: 'approval-response', id, approved: ok });
   }
   function retry() { if (lastUserText) send(lastUserText); }
+
+  // ===== استشعار انقطاع التشغيل (SW قُتل / انقطع البث) =====
+  function startWatchdog() {
+    stopWatchdog();
+    watchdog = setInterval(checkAlive, 8000);
+  }
+  function stopWatchdog() {
+    clearInterval(watchdog);
+    watchdog = undefined;
+  }
+  async function checkAlive() {
+    if (!busy) { stopWatchdog(); return; }
+    const res: any = await rpc('run-active', { sessionId }).catch(() => ({ ok: false }));
+    if (!res.ok) return; // SW يستيقظ
+    if (!res.active) {
+      stopWatchdog();
+      busy = false; approvals = []; progress = ''; livePlan = []; toolCalls = []; liveText = '';
+      stalled = true;
+      await loadSession(sessionId);
+    }
+  }
 
   // ===== الجلسات =====
   async function openSession(id: string) {
@@ -197,7 +231,7 @@
     {#if tab === 'chat'}
       <ChatView
         {messages} {liveText} {livePlan} {toolCalls} {busy} {approvals} {progress} {lang}
-        sessions={sessionsList} currentId={sessionId} {settingsError}
+        sessions={sessionsList} currentId={sessionId} {settingsError} {stalled}
         send={send} stop={stop} approve={approve} retry={retry} openSettings={() => (tab = 'settings')}
         openSession={openSession} createSession={newSession} removeSession={deleteSession}
       />

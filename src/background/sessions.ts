@@ -37,6 +37,22 @@ export function createSessionStore(kv: KV) {
       s.updatedAt = Date.now();
       await kv.set(PREFIX + id, s);
     },
+    /** تعديل رسالة موجودة أثناء البث (مسودة الرد) */
+    async patchMessage(id: string, msgId: string, patch: Partial<ChatMessage>) {
+      const s = await get(id);
+      if (!s) return;
+      const i = s.messages.findIndex((m) => m.id === msgId);
+      if (i < 0) return;
+      s.messages[i] = { ...s.messages[i], ...patch };
+      s.updatedAt = Date.now();
+      await kv.set(PREFIX + id, s);
+    },
+    async removeMessage(id: string, msgId: string) {
+      const s = await get(id);
+      if (!s) return;
+      s.messages = s.messages.filter((m) => m.id !== msgId);
+      await kv.set(PREFIX + id, s);
+    },
     async update(id: string, patch: Partial<Session>) {
       const s = await get(id);
       if (!s) throw new Error('not found');
