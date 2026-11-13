@@ -13,6 +13,7 @@
   let saved = $state(false);
   let open = $state(false);
   let approvalMode = $state<'sensitive' | 'always' | 'never'>('sensitive');
+  let skillsMsg = $state('');
 
   const filtered = $derived(
     model ? models.filter((m) => m.toLowerCase().includes(model.toLowerCase())) : models,
@@ -28,6 +29,10 @@
     permAlways: 'اسأل عن كل إجراء',
     permNever: 'بدون سؤال — تحكم كامل تلقائي',
     permsHint: 'يشمل التنقل، الإغلاق، النقر، الملء، والحذف.',
+    skillsBackup: 'نسخ احتياطي للمهارات',
+    exportAll: '⤓ تصدير كل المهارات',
+    importAll: '⇪ استيراد ملف مهارات',
+    skillsHint: 'ملف JSON واحد يضم كل المهارات (بما فيها الملفات المرفقة).',
   } : {
     baseUrl: 'Base URL', apiKey: 'API Key', model: 'Model',
     fetch: 'Fetch models', language: 'Language', save: 'Save', saved: 'Saved ✓',
@@ -39,6 +44,10 @@
     permAlways: 'Ask for every action',
     permNever: 'No prompts — full auto control',
     permsHint: 'Covers navigation, closing, clicking, filling and deletion.',
+    skillsBackup: 'Skills backup',
+    exportAll: '⤓ Export all skills',
+    importAll: '⇪ Import skills file',
+    skillsHint: 'One JSON file containing all skills (including attachments).',
   });
 
   oninit();
@@ -75,6 +84,39 @@
     await rpc('save-settings', { patch: { approvalMode: m } });
     saved = true;
     setTimeout(() => (saved = false), 1600);
+  }
+
+  // ===== نسخ احتياطي للمهارات =====
+  async function exportAllSkills() {
+    const res: any = await rpc('list-skills');
+    if (!res.ok) { skillsMsg = res.error; return; }
+    const url = URL.createObjectURL(new Blob([JSON.stringify(res.skills, null, 2)], { type: 'application/json' }));
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'browsemate-skills.json';
+    a.click();
+    URL.revokeObjectURL(url);
+    skillsMsg = lang === 'ar' ? `تم تصدير ${res.skills.length} مهارة` : `Exported ${res.skills.length} skills`;
+  }
+
+  async function importSkillsFile(file: File | undefined) {
+    if (!file) return;
+    try {
+      const parsed = JSON.parse(await file.text());
+      const list: any[] = Array.isArray(parsed) ? parsed : [parsed];
+      let ok = 0;
+      const errs: string[] = [];
+      for (const skill of list) {
+        const r: any = await rpc('import-skill', { skill });
+        if (r.ok) ok++;
+        else errs.push(`${skill?.name ?? '?'}: ${r.error}`);
+      }
+      skillsMsg = lang === 'ar'
+        ? `تم استيراد ${ok}${errs.length ? ` — فشل ${errs.length}` : ''}`
+        : `Imported ${ok}${errs.length ? ` — ${errs.length} failed` : ''}`;
+    } catch (e: any) {
+      skillsMsg = `JSON: ${e.message}`;
+    }
   }
 
   async function fetchModels(silent = false) {
@@ -151,6 +193,20 @@
         <button class:active={lang === 'ar'} onclick={() => setUiLang('ar')}>العربية</button>
         <button class:active={lang === 'en'} onclick={() => setUiLang('en')}>English</button>
       </div>
+    </div>
+
+    <div class="field">
+      <label>{L.skillsBackup}</label>
+      <div style="display:flex; gap:6px; flex-wrap:wrap">
+        <button class="mini" onclick={exportAllSkills}>{L.exportAll}</button>
+        <label class="mini" style="cursor:pointer">
+          {L.importAll}
+          <input type="file" accept=".json,application/json" style="display:none"
+                 onchange={(e) => { importSkillsFile((e.currentTarget as HTMLInputElement).files?.[0]); (e.currentTarget as HTMLInputElement).value = ''; }} />
+        </label>
+      </div>
+      <div class="hint">{L.skillsHint}</div>
+      {#if skillsMsg}<div class="hint" style="color:var(--ok)">{skillsMsg}</div>{/if}
     </div>
 
     <button class="btn" onclick={() => saveAll()}>{L.save}</button>

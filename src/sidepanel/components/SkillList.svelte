@@ -16,8 +16,6 @@
 
   let expanded = $state<string | null>(null);
   let paramValues = $state<Record<string, Record<string, string>>>({});
-  let importText = $state('');
-  let importing = $state(false);
 
   // محرر الإعدادات
   let editing = $state<SkillFile | null>(null);
@@ -55,22 +53,22 @@
   }
 
   const L = $derived(lang === 'ar' ? {
-    run: 'تشغيل', del: 'حذف', exp: 'تصدير', imp: 'استيراد JSON',
-    none: 'لا مهارات محفوظة بعد', ph: 'الصق ملف المهارة JSON هنا', save: 'حفظ', cancel: 'إلغاء',
+    run: 'تشغيل', del: 'حذف', exp: 'تصدير',
+    none: 'لا مهارات محفوظة بعد', save: 'حفظ', cancel: 'إلغاء',
     hint: 'تُنشأ المهارات من الشات: «احفظ هذا كمهارة باسم …»',
     playbook: 'مهارة إجرائية', settings: 'إعدادات المهارة', desc: 'الوصف', when: 'متى تُستخدم (المشكلة)',
     site: 'الموقع/النطاق', notes: 'ملاحظات وقيود', instructions: 'التعليمات (Playbook)',
     context: 'ملف مرفق Markdown (مثل CV.md)', attach: '📎 رفع ملف .md', attached: 'مرفق',
-    params: 'معاملات', emptyFile: 'لا ملف مرفق', expAll: 'تصدير الكل',
+    params: 'معاملات', emptyFile: 'لا ملف مرفق',
     dragHint: 'اسحب البطاقة أو استخدم ↑↓ لتغيير الترتيب',
   } : {
-    run: 'Run', del: 'Delete', exp: 'Export', imp: 'Import JSON',
-    none: 'No saved skills yet', ph: 'Paste skill JSON here', save: 'Save', cancel: 'Cancel',
+    run: 'Run', del: 'Delete', exp: 'Export',
+    none: 'No saved skills yet', save: 'Save', cancel: 'Cancel',
     hint: 'Create skills from chat: “save this as a skill named …”',
     playbook: 'Playbook', settings: 'Skill settings', desc: 'Description', when: 'When to use (problem)',
     site: 'Site/domain', notes: 'Notes & limits', instructions: 'Instructions (playbook)',
     context: 'Attached markdown (e.g. CV.md)', attach: '📎 Upload .md', attached: 'attached',
-    params: 'Params', emptyFile: 'No file attached', expAll: 'Export all',
+    params: 'Params', emptyFile: 'No file attached',
     dragHint: 'Drag a card or use ↑↓ to reorder',
   });
 
@@ -104,35 +102,6 @@
     editing = null;
     refresh();
   }
-  async function importAll(json: string) {
-    try {
-      const parsed = JSON.parse(json);
-      const list: any[] = Array.isArray(parsed) ? parsed : [parsed];
-      let ok = 0;
-      const errs: string[] = [];
-      for (const skill of list) {
-        const res: any = await rpc('import-skill', { skill });
-        if (res.ok) ok++;
-        else errs.push(`${skill?.name ?? '?'}: ${res.error}`);
-      }
-      importing = false;
-      importText = '';
-      refresh();
-      if (errs.length) alert(`تم استيراد ${ok} — أخطاء:\n${errs.join('\n')}`);
-    } catch (e: any) {
-      alert(`JSON غير صالح: ${e.message}`);
-    }
-  }
-
-  function exportAll() {
-    const url = URL.createObjectURL(new Blob([JSON.stringify(skills, null, 2)], { type: 'application/json' }));
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = 'browsemate-skills.json';
-    a.click();
-    URL.revokeObjectURL(url);
-  }
-
   async function pickFile(file: File | undefined) {
     if (!file) return;
     form.context = await file.text();
@@ -195,27 +164,6 @@
         {/if}
       </div>
     {/each}
-  </div>
-
-  <div style="padding:10px 12px 12px; border-top:1px solid var(--border-soft)">
-    {#if importing}
-      <textarea
-        bind:value={importText}
-        placeholder={L.ph}
-        rows="4"
-        dir="ltr"
-        style="width:100%; font-size:11px; padding:8px; border-radius:9px; border:1px solid var(--border); background:var(--surface); color:var(--text)"
-      ></textarea>
-      <div style="display:flex; gap:6px; margin-top:6px">
-        <button class="btn" style="padding:7px 14px" onclick={() => importAll(importText)}>{L.save}</button>
-        <button class="btn ghost" style="padding:7px 12px" onclick={() => (importing = false)}>✕</button>
-      </div>
-    {:else}
-      <div style="display:flex; gap:6px; flex-wrap:wrap">
-        <button class="mini" onclick={() => (importing = true)}>⇪ {L.imp}</button>
-        <button class="mini" disabled={!skills.length} onclick={exportAll}>⤓ {L.expAll}</button>
-      </div>
-    {/if}
   </div>
 </div>
 
