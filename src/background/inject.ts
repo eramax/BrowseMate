@@ -1,26 +1,29 @@
-// ضمان الحقن وإرسال الأوامر للصفحة — إعادة حقن تلقائية للصفحات المعاد تحميلها
-export async function ensureInjected(tabId: number) {
+// الصفحة مُحقنة تلقائياً عبر manifest content_scripts — هذه طبقة أمان للصفحات المفتوحة قبل تثبيت الإضافة
+// المسار المبني يختلف (hash) — نقرأه من manifest مباشرة
+function contentScriptFile(): string {
+  return chrome.runtime.getManifest().content_scripts![0].js![0];
+}
+
+export async function ensureInjected(tabId: number): Promise<boolean> {
   try {
     await chrome.tabs.sendMessage(tabId, { __ta: 'page-tools', op: 'ping' });
+    return true;
   } catch {
-    await chrome.scripting.executeScript({ target: { tabId }, files: ['src/content/page-tools.ts'] });
+    try {
+      await chrome.scripting.executeScript({ target: { tabId }, files: [contentScriptFile()] });
+      return true;
+    } catch {
+      return false; // صفحات chrome:// وغيرها مقيّدة
+    }
   }
 }
 
-export function sendToPage<T = unknown>(
+export async function withPage<T = unknown>(
   tabId: number,
   op: string,
   extra: Record<string, unknown> = {},
 ): Promise<{ ok: boolean; data?: T; error?: string }> {
+  if (!(await ensureInjected(tabId)))
+    return { ok: false, error: 'PAGE_RESTRICTED', message: 'هذه الصفحة لا يمكن التحكم بها (مقيّدة من كروم)' };
   return chrome.tabs.sendMessage(tabId, { __ta: 'page-tools', op, ...extra });
-}
-
-export async function withPage<T>(tabId: number, op: string, extra: Record<string, unknown> = {}): Promise<{ ok: boolean; data?: T; error?: string }> {
-  await ensureInjected(tabId);
-  try {
-    return await sendToPage<T>(tabId, op, extra);
-  } catch {
-    await ensureInjected(tabId); // الصفحة أُعيد تحميلها → حقن جديد ثم محاولة أخيرة
-    return sendToPage<T>(tabId, op, extra);
-  }
 }
