@@ -5,6 +5,7 @@ import { createSessionStore, MAX_MSGS_PER_SESSION } from './sessions';
 import { createApprovalManager } from './approvals';
 import { runChat, type RunHandle } from './agent';
 import { seedSkills } from './seed';
+import { getArtifact } from './artifacts';
 import { chromeKV } from '../shared/storage';
 import { validateSkill, buildSkillFromToolCalls } from './skills';
 import { setLang } from '../shared/i18n';
@@ -15,6 +16,8 @@ import './tools/misc';
 import './tools/inspect';
 import './tools/pdf';
 import './tools/youtube';
+import './tools/cv';
+import './tools/doc';
 import './tools/skillTools';
 
 const sessions = createSessionStore(chromeKV);
@@ -122,11 +125,28 @@ chrome.runtime.onMessage.addListener((msg: any, _s, send) => {
           const skill = all[msg.name];
           if (!skill) { send({ ok: false, error: 'مهارة غير موجودة' }); break; }
           const next = { ...skill, ...msg.patch, name: skill.name };
+          if (msg.patch?.instructions !== undefined) next.seedRev = -1; // المستخدم عدّل التعليمات
           const err = validateSkill(next);
           if (err) { send({ ok: false, error: err }); break; }
           all[msg.name] = next;
           await chromeKV.set('skills', all);
           send({ ok: true });
+          break;
+        }
+        case 'download-artifact':
+        case 'print-artifact': {
+          const a = await getArtifact(msg.id);
+          if (!a) { send({ ok: false, error: 'المستند غير موجود (انتهت صلاحيته)' }); break; }
+          if (msg.type === 'download-artifact') {
+            send({ ok: true, url: 'data:text/html;charset=utf-8,' + encodeURIComponent(a.html), filename: a.filename });
+            break;
+          }
+          // طباعة: افتح المستند مع #print فتُفتح نافذة الطباعة تلقائياً (حفظ كـ PDF) — بدون debugger
+          await chrome.tabs.create({
+            url: 'data:text/html;charset=utf-8,' + encodeURIComponent(a.html) + '#print',
+            active: true,
+          });
+          send({ ok: true, printed: true });
           break;
         }
         case 'create-skill-from-message': {

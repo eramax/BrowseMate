@@ -2,7 +2,7 @@
 import { chromeKV } from '../shared/storage';
 import type { SkillFile } from '../shared/types';
 
-const SEED_VERSION = 4;
+const SEED_VERSION = 6;
 
 const SEEDS: SkillFile[] = [
   {
@@ -50,14 +50,35 @@ const SEEDS: SkillFile[] = [
     whenToUse: 'عندما تكون في صفحة وظيفة وتريد سيرة ذاتية متناسبة مع متطلباتها',
     site: 'أي موقع توظيف',
     notes: 'أرفق سيرتك الذاتية كملف Markdown من بطاقة المهارة (زر 📎). لا يختلق النموذج خبرات غير موجودة.',
-    instructions: `مهمتك: توليد سيرة ذاتية PDF مخصصة للوظيفة المعروضة في التبويب النشط. اكتب السيرة بالإنجليزية (English) دائماً ما لم يطلب المستخدم لغة أخرى صراحةً.
-1) استدعِ read_page لقراءة صفحة الوظيفة، واستخرج: Job title، Company، Requirements، Responsibilities، Keywords.
-2) اعتمد حصرياً على السيرة الذاتية الموجودة في context (Markdown). لا تخترع خبرات أو مهارات غير موجودة؛ أعد الترتيب والصياغة والإبراز فقط.
-3) أنشئ مستند HTML كامل A4 احترافياً بالإنجليزية (خطوط نظام، ألوان هادئة، عمود واحد، عناوين واضحة، ATS-friendly: عناوين قياسية مثل Summary / Skills / Experience / Education). أبرز المهارات والخبرات المطابقة لمتطلبات الوظيفة وأعد ترتيبها حسب الصلة، واستخدم كلمات الوظيفة المفتاحية.
-4) اجعل المحتوى في صفحة أو صفحتين كحد أقصى، بدون صور أو ألوان طباعة كثيفة، وبخط مقروء (10.5-11pt).
-5) استدعِ export_pdf مع filename مناسب مثل CV-Company-JobTitle.pdf.
-6) بعد النجاح اعرض ملخصاً قصيراً بالعربية: ما الذي أُبرز/أُعيد ترتيبه ولماذا، واسم الملف.
-إن كان context فارغاً اطلب من المستخدم رفع CV.md من بطاقة المهارة قبل المتابعة.`,
+    instructions: `مهمتك: توليد سيرة ذاتية إنجليزية مخصصة للوظيفة بسرعة وبأقل خطوات.
+1) استدعِ read_page مرة واحدة على صفحة الوظيفة واستخرج: Job title، Company، Requirements، Responsibilities، Keywords.
+2) لا تكتب HTML ولا تستخدم export_pdf. استدعِ render_cv مباشرة ببيانات JSON منظمة:
+   - name/title/email/phone/location/links من سيرة المستخدم (context).
+   - summary: 2-3 أسطر مخصصة للوظيفة.
+   - skills: مرتبة حسب صلة الوظيفة.
+   - experience: نفس الخبرات الحقيقية، bullets معاد صياغتها بإيجاز (3-5 لكل وظيفة) مع كلمات الوظيفة المفتاحية.
+   - education/projects/certifications/languages كما في السيرة.
+   - filename: CV-Company-Role.html
+3) اعتمد حصرياً على context؛ لا تختلق خبرات أو مهارات. اجعل الناتج صفحة أو صفحتين.
+4) بعد render_cv اكتب ملخصاً قصيراً بالعربية (3 أسطر): ما أُبرز، واسم الملف. لا حاجة لأي أداة إضافية.
+إن كان context فارغاً اطلب رفع CV.md من ⚙ إعدادات المهارة.`,
+    params: [],
+    steps: [],
+    version: 1,
+  },
+  {
+    name: 'cover-letter',
+    description: 'يكتب خطاب تقديم (Cover Letter) إنجليزي مخصص للوظيفة المفتوحة كملف منسق',
+    whenToUse: 'عندما تكون في صفحة وظيفة وتريد خطاب تقديم مخصصاً لسيرتك',
+    site: 'أي موقع توظيف',
+    notes: 'يستخدم نفس CV.md المرفق في cv-tailor إن وُجد؛ لا يختلق إنجازات.',
+    instructions: `مهمتك: كتابة Cover Letter إنجليزي مخصص للوظيفة المعروضة في التبويب النشط.
+1) استدعِ read_page مرة واحدة واستخرج: Job title، Company، Requirements، Keywords، اسم جهة الاتصال إن وُجد.
+2) اعتمد على context (السيرة) إن وُجد؛ وإن لم يوجد اطلب رفع CV.md من ⚙ إعدادات مهارة cv-tailor (السياق لا يُشارك تلقائياً).
+3) اكتب 3-4 فقرات، 250-350 كلمة: افتتاحية (الوظيفة + الشركة + سبب الاهتمام)، ملاءمة (2-3 إنجازات حقيقية مرتبطة بالمتطلبات مع أرقام إن وُجدت)، لماذا الشركة، خاتمة (دعوة لمقابلة + شكر). لغة مهنية مباشرة، بلا مبالغات.
+4) استدعِ render_document بحقول: title=Cover Letter — {Job Title}، subtitle={Company}، meta=[Date, To: Hiring Manager, Re: Application for {Job Title}]، paragraphs=[...]، signature.
+5) filename مثل CoverLetter-Company-JobTitle.html.
+6) بعد النجاح اكتب سطرين بالعربية عن الملف. لا تستخدم export_pdf ولا تكتب HTML.`,
     params: [],
     steps: [],
     version: 1,
@@ -86,9 +107,10 @@ export async function seedSkills() {
   const existing = (await chromeKV.get<Record<string, SkillFile>>('skills')) ?? {};
   for (const s of SEEDS) {
     const cur = existing[s.name];
-    if (!cur) { existing[s.name] = s; continue; }
-    // تحديث إرشادات المهارات المبدئية فقط إن لم يرفق المستخدم سياقاً (لم يعدّلها)
-    if (s.instructions && !cur.context) existing[s.name] = { ...cur, instructions: s.instructions, notes: s.notes, whenToUse: s.whenToUse };
+    if (!cur) { existing[s.name] = { ...s, seedRev: SEED_VERSION }; continue; }
+    if (cur.seedRev === -1 || cur.seedRev === SEED_VERSION) continue; // عدّلها المستخدم أو محدثة
+    // ترقية مهارة مبدئية: حدّث التعليمات مع الحفاظ على الملف المرفق والمعاملات
+    existing[s.name] = { ...s, context: cur.context, params: cur.params, seedRev: SEED_VERSION };
   }
   await chromeKV.set('skills', existing);
   await chromeKV.set('skillsSeeded', SEED_VERSION);

@@ -8,6 +8,7 @@ export interface ChatMessage {
   ts: number;
   toolCalls?: ToolCallInfo[];
   plan?: string[]; // خطة معلنة (تُعرض كبطاقة، وتُنزع ::plan من النص)
+  artifacts?: Array<{ id: string; filename: string; mime: string; sizeKb: number }>;
 }
 
 export interface ToolCallInfo {
@@ -85,4 +86,5 @@ export interface SkillFile {
   params: SkillParam[];
   steps: SkillStep[];
   version?: number;
+  seedRev?: number; // -1 = عدّلها المستخدم فلا تُلمس عند الزرع
 }

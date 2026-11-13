@@ -257,3 +257,12 @@ input, textarea, select { font: inherit; }
 .modal-body input:focus, .modal-body textarea:focus { border-color: var(--accent); }
 .modal-foot { display: flex; gap: 8px; padding: 10px 14px; border-top: 1px solid var(--border-soft); }
 .modal-foot .btn { flex: 1; padding: 9px; }
+
+/* ===== المستندات في الرسائل ===== */
+.artifacts { display: flex; flex-direction: column; gap: 6px; margin: 2px 0 4px; }
+.artifact {
+  display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 8px 10px;
+}
+.artifact .fname { flex: 1; min-width: 130px; font-size: 12px; color: var(--text-soft); overflow: hidden; text-overflow: ellipsis; }
+.artifact .fname small { color: var(--muted); }

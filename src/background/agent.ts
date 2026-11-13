@@ -31,6 +31,7 @@ const SYSTEM = `أنت BrowseMate — وكيل متصفح داخل إضافة ك
 - اقرأ الصفحة (read_page) قبل أي تعديل للحصول على معرفات العناصر.
 - لا تكرر أداة فشلت بنفس الوسائط؛ غيّر النهج واسأل المستخدم عند الحاجة.
 - بعد الانتهاء من الأدوات يجب أن تكتب ردًا نهائيًا يلخّص النتيجة — لا تنهِ دورك بأداة فقط.
+- لإنشاء مستندات منسقة (سيرة، خطاب، تقرير): استخدم render_cv أو render_document ببيانات منظمة. لا تكتب HTML ولا تستخدم export_pdf إلا إذا طلب المستخدم PDF مباشراً.
 - عندما يطلب المستخدم تحويل إجراء/خطوات إلى مهارة: استدعِ save_skill_from_run فوراً. المهارة يجب أن تكون عامة قابلة لإعادة الاستخدام: حدّد whenToUse (المشكلة)، وsite إن كانت للموقع نفسه، ومرّر replacements لتحويل القيم المحددة (روابط، كلمات بحث، أسماء) إلى معاملات {{param}}، وعرّفها في params مع description وexample. لا تعرض JSON ولا تطلب تأكيداً. لا تقل "تم الحفظ" إلا إذا أعادت الأداة saved.
 - إن كانت الخطوات موجودة في سجل الأدوات المرفق بالرسائل، اعتمد عليه كما هو.
 - الردود markdown بلغة المستخدم (غالبًا العربية).`;
@@ -47,6 +48,7 @@ export async function runChat(deps: AgentDeps, sessionId: string, userText: stri
   let plan: string[] | undefined;
   let planArmed = false;
   const toolLog: ToolLogEntry[] = [];
+  const artifacts: ChatMessage['artifacts'] = [];
   let draftId = '';
 
   // حفظ حي: مسودة الرد + tool calls تُكتب أثناء التشغيل (تصمد لو قُتل SW)
@@ -136,6 +138,7 @@ export async function runChat(deps: AgentDeps, sessionId: string, userText: stri
         persist(true);
       } else if (type === 'tool-result') {
         const out: any = (part as any).output;
+        if (out?.artifact?.id) artifacts.push(out.artifact);
         const entry = toolLog.find((t) => t.name === (part as any).toolName && t.status === 'running');
         if (entry) {
           entry.status = out?.error === 'REFUSED_BY_USER' ? 'refused' : 'ok';
@@ -163,6 +166,7 @@ export async function runChat(deps: AgentDeps, sessionId: string, userText: stri
 
     await deps.sessions.patchMessage(sessionId, draftId, {
       content: full, toolCalls: toolLog.map(({ result, ...t }) => t), plan,
+      artifacts: artifacts.length ? artifacts : undefined,
     });
     deps.emit(sessionId, { type: 'done', runId });
   } catch (e: any) {

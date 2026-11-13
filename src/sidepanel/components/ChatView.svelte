@@ -122,7 +122,7 @@
 
   <div class="msgs" bind:this={scroller}>
     {#each messages as m (m.id)}
-      <Message msg={m} />
+      <Message msg={m} {lang} />
     {/each}
 
     {#if busy}
