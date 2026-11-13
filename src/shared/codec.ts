@@ -1,5 +1,20 @@
-// ضغط/تقسيم حمولات المهارات — gzip + base64 + chunks لاحترام حدود chrome.storage.sync
+// ضغط/تقسيم حمولات المهارات — Brotli WASM (quality 11) مع fallback إلى gzip
+// + base64 + chunks لاحترام حدود chrome.storage.sync
 const CHUNK = 6000;
+
+let brotliPromise: Promise<any> | null = null;
+async function getBrotli(): Promise<any | null> {
+  if (!brotliPromise) {
+    brotliPromise = import('brotli-wasm')
+      .then((m: any) => m.default)
+      .catch(() => null);
+  }
+  try {
+    return await brotliPromise;
+  } catch {
+    return null;
+  }
+}
 
 function b64encode(bytes: Uint8Array): string {
   let s = '';
@@ -35,11 +50,26 @@ async function gunzipBytes(bytes: Uint8Array): Promise<Uint8Array> {
 
 export async function pack(text: string): Promise<string> {
   const raw = new TextEncoder().encode(text);
+  // Brotli أولاً (أفضل ضغط) — عند أي فشل نعود إلى gzip
+  const br = await getBrotli();
+  if (br && typeof br.compress === 'function') {
+    try {
+      const out: Uint8Array = br.compress(raw, { quality: 11 });
+      return 'br:' + b64encode(out);
+    } catch {
+      /* fallback */
+    }
+  }
   if (typeof CompressionStream === 'undefined') return 'raw:' + b64encode(raw);
   return 'gz:' + b64encode(await gzipBytes(raw));
 }
 
 export async function unpack(payload: string): Promise<string> {
+  if (payload.startsWith('br:')) {
+    const br = await getBrotli();
+    if (!br || typeof br.decompress !== 'function') throw new Error('brotli unavailable');
+    return new TextDecoder().decode(br.decompress(b64decode(payload.slice(3))));
+  }
   if (payload.startsWith('raw:')) return new TextDecoder().decode(b64decode(payload.slice(4)));
   if (!payload.startsWith('gz:')) throw new Error('bad payload');
   if (typeof DecompressionStream === 'undefined') throw new Error('no DecompressionStream');
