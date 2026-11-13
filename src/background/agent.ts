@@ -62,7 +62,8 @@ export async function runChat(deps: AgentDeps, sessionId: string, userText: stri
       instructions: SYSTEM + `\n\nسياق التبويب النشط الآن: title="${tab?.title ?? ''}" url="${tab?.url ?? ''}"`,
       abortSignal: ac.signal,
       stopWhen: isStepCount(15),
-      messages: history.map((m) => ({ role: m.role, content: m.content })),
+      // v7 يرفض role:'system' داخل messages افتراضيًا — علامات القص تُحوّل لملاحظة مستخدم
+      messages: history.map((m) => ({ role: m.role === 'system' ? 'user' : m.role, content: m.content })),
       tools: asAISDKTools(ctx, () => planArmed),
     });
 
