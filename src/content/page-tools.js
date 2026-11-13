@@ -43,10 +43,83 @@
     return out.slice(0, 200);
   }
 
+  async function ytTranscript() {
+    var vid = new URL(location.href).searchParams.get('v');
+    var titleEl = document.querySelector('h1 yt-formatted-string, h1.title');
+    var title = titleEl ? titleEl.textContent.trim() : document.title;
+    var join = function (segs) { return segs.join(' ').replace(/\s+/g, ' ').trim().slice(0, 20000); };
+
+    // 1) مسارات الترجمة من player response (بدون مفاتيح)
+    var tracks = null;
+    try { tracks = window.ytInitialPlayerResponse && window.ytInitialPlayerResponse.captions
+      && window.ytInitialPlayerResponse.captions.playerCaptionsTracklistRenderer
+      && window.ytInitialPlayerResponse.captions.playerCaptionsTracklistRenderer.captionTracks; } catch (e) {}
+    if (!tracks) {
+      try {
+        var pl = document.querySelector('#movie_player');
+        var pr = pl && pl.getPlayerResponse && pl.getPlayerResponse();
+        tracks = pr && pr.captions && pr.captions.playerCaptionsTracklistRenderer && pr.captions.playerCaptionsTracklistRenderer.captionTracks;
+      } catch (e) {}
+    }
+    if (tracks && tracks.length) {
+      var pick = tracks.find(function (t) { return t.languageCode === 'ar'; })
+        || tracks.find(function (t) { return /^en/.test(t.languageCode || '') && t.kind !== 'asr'; })
+        || tracks.find(function (t) { return /^en/.test(t.languageCode || ''); })
+        || tracks[0];
+      try {
+        var res = await fetch(pick.baseUrl + '&fmt=json3', { credentials: 'include' });
+        if (res.ok) {
+          var data = await res.json();
+          var segs = (data.events || []).map(function (ev) {
+            return (ev.segs || []).map(function (s) { return s.utf8 || ''; }).join('');
+          }).filter(Boolean);
+          if (segs.length) {
+            return { videoId: vid, title: title, lang: pick.languageCode, source: 'captions', segments: segs, text: join(segs) };
+          }
+        }
+      } catch (e) {}
+    }
+
+    // 2) لوحة النص في الواجهة (احتياطي موثوق)
+    var expand = Array.prototype.find.call(
+      document.querySelectorAll('#expand, tp-yt-paper-button#expand, ytd-text-inline-expander #expand'),
+      function (x) { return /more|المزيد|إظهار/i.test(x.textContent || ''); });
+    if (expand) expand.click();
+    await new Promise(function (r) { setTimeout(r, 400); });
+    var all = Array.prototype.slice.call(document.querySelectorAll('button, tp-yt-paper-button, ytd-button-renderer'));
+    var btn = all.find(function (x) {
+      return /transcript|النص|نص الفيديو|إظهار النص|عرض النص/i.test((x.getAttribute('aria-label') || '') + ' ' + (x.textContent || ''));
+    });
+    if (btn) btn.click();
+    for (var i = 0; i < 25; i++) {
+      var els = document.querySelectorAll('ytd-transcript-segment-renderer');
+      if (els.length) {
+        var segs2 = Array.prototype.map.call(els, function (e) {
+          var t = e.querySelector('#segment-text, .segment-text');
+          return t ? t.textContent.trim() : '';
+        }).filter(Boolean);
+        if (segs2.length) {
+          return { videoId: vid, title: title, lang: 'panel', source: 'panel', segments: segs2, text: join(segs2) };
+        }
+      }
+      await new Promise(function (r) { setTimeout(r, 200); });
+    }
+    return { error: 'NO_TRANSCRIPT', message: 'لا توجد ترجمة متاحة أو تعذر فتح لوحة النص لهذا الفيديو' };
+  }
+
   chrome.runtime.onMessage.addListener(function (msg, _s, send) {
     if (!msg || msg.__ta !== 'page-tools') return;
     (async function () {
       if (msg.op === 'ping') { send({ ok: true }); return; }
+      if (msg.op === 'yt_transcript') {
+        if (!/(^|\.)youtube\.com$/.test(location.hostname)) {
+          send({ ok: false, error: 'NOT_YOUTUBE', message: 'التبويب النشط ليس يوتيوب' }); return;
+        }
+        var tr = await ytTranscript();
+        if (tr.error) send({ ok: false, error: tr.error, message: tr.message });
+        else send({ ok: true, data: tr });
+        return;
+      }
       if (msg.op === 'read') {
         var text = document.body.innerText.replace(/\n{3,}/g, '\n\n').slice(0, 6000);
         send({ ok: true, data: { title: document.title, url: location.href, text: text, elements: collectInteractive() } });

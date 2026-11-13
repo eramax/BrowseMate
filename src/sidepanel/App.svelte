@@ -182,10 +182,19 @@
   }
 
   // ===== المهارات =====
-  function runSkill(name: string, params: Record<string, string>) {
+  async function runSkill(name: string, params: Record<string, string>) {
     const parts = Object.entries(params).filter(([, v]) => v.trim()).map(([k, v]) => `${k}: ${v}`);
-    send(`شغّل المهارة ${name}${parts.length ? ` بمعاملات ${parts.join(', ')}` : ''}`);
+    const res: any = await rpc('new-session');
+    if (!res.ok) return;
+    const id = res.session.id;
+    await rpc('rename-session', { id, title: name });
+    await refreshSessions();
+    sessionId = id;
+    port.send({ type: 'session-switch', sessionId: id });
     tab = 'chat';
+    messages = [];
+    const msg = `شغّل المهارة ${name}${parts.length ? ` بمعاملات ${parts.join(', ')}` : ''}`;
+    send(msg);
   }
   async function deleteSkill(name: string) {
     await rpc('delete-skill', { name });

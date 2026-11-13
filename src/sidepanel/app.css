@@ -237,3 +237,23 @@ input, textarea, select { font: inherit; }
 .seg { display: flex; border: 1px solid var(--border); border-radius: 10px; overflow: hidden; width: fit-content; }
 .seg button { padding: 7px 18px; border: none; background: transparent; color: var(--muted); font-size: 12.5px; }
 .seg button.active { background: var(--accent); color: #fff; }
+
+/* ===== نافذة إعدادات المهارة ===== */
+.mini.accent { color: var(--accent); border-color: var(--accent); }
+.modal-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,.55); z-index: 60; }
+.modal {
+  position: fixed; z-index: 61; inset-inline: 10px; top: 8%; max-height: 84%;
+  display: flex; flex-direction: column; background: var(--surface-2);
+  border: 1px solid var(--border); border-radius: 14px; box-shadow: 0 24px 60px rgba(0,0,0,.6);
+}
+.modal-head { display: flex; align-items: center; gap: 8px; padding: 12px 14px; border-bottom: 1px solid var(--border-soft); }
+.modal-head .hint { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.modal-body { display: flex; flex-direction: column; gap: 10px; padding: 12px 14px; overflow-y: auto; }
+.modal-body .fld { display: flex; flex-direction: column; gap: 4px; font-size: 11.5px; color: var(--muted); }
+.modal-body input, .modal-body textarea {
+  width: 100%; padding: 8px 10px; border-radius: 9px; border: 1px solid var(--border);
+  background: var(--bg); color: var(--text); font-size: 12.5px; resize: vertical; outline: none;
+}
+.modal-body input:focus, .modal-body textarea:focus { border-color: var(--accent); }
+.modal-foot { display: flex; gap: 8px; padding: 10px 14px; border-top: 1px solid var(--border-soft); }
+.modal-foot .btn { flex: 1; padding: 9px; }

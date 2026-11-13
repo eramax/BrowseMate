@@ -14,6 +14,7 @@ import './tools/tabs';
 import './tools/misc';
 import './tools/inspect';
 import './tools/pdf';
+import './tools/youtube';
 import './tools/skillTools';
 
 const sessions = createSessionStore(chromeKV);
