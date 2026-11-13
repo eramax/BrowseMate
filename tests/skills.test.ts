@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { runSkill, validateSkill } from '../src/background/skills';
+import { runSkill, validateSkill, buildSkillFromToolCalls } from '../src/background/skills';
 import type { SkillFile } from '../src/shared/types';
 
 const skill: SkillFile = {
@@ -67,8 +67,7 @@ describe('skill engine', () => {
     expect(r.ok).toBe(false);
     expect(r.error).toMatch(/navigate/);
   });
-  it('aborted signal returns user-cancelled between steps', async () => {
-    const ac = new AbortController();
+  it('aborted signal returns user-cancelled between steps', async () => {    const ac = new AbortController();
     const reg = new Map([
       ['navigate', { execute: async () => { ac.abort(); return {}; } }],
       ['read_page', { execute: async () => ({}) }],
@@ -77,5 +76,27 @@ describe('skill engine', () => {
     expect(r.ok).toBe(false);
     expect(r.error).toBe('ألغى المستخدم');
     expect(r.results).toHaveLength(1); // نتيجة الخطوة الأولى فقط
+  });
+});
+
+describe('buildSkillFromToolCalls', () => {
+  it('builds steps from successful real tool calls only (skips meta/failed)', () => {
+    const r = buildSkillFromToolCalls('مهارة جديدة', 'وصف', [
+      { name: 'navigate', args: { url: 'https://x.com' }, status: 'ok' },
+      { name: 'read_page', args: {}, status: 'ok' },
+      { name: 'save_skill', args: { skill: {} }, status: 'ok' },
+      { name: 'click_element', args: { label: 'x' }, status: 'refused' },
+    ]);
+    expect('error' in r).toBe(false);
+    if ('error' in r) return;
+    expect(r.name).toBe('مهارة جديدة');
+    expect(r.steps.map((s) => s.tool)).toEqual(['navigate', 'read_page']);
+  });
+  it('rejects when nothing usable', () => {
+    const r = buildSkillFromToolCalls('x', '', [
+      { name: 'save_skill', args: {}, status: 'ok' },
+      { name: 'navigate', args: {}, status: 'error' },
+    ]);
+    expect('error' in r).toBe(true);
   });
 });
