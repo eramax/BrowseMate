@@ -9,6 +9,21 @@ import type { SkillFile } from '../shared/types';
 const MANIFEST = 'bm:skills:manifest';
 const chunkKey = (i: number) => `bm:skills:c:${i}`;
 const MAX_PAYLOAD = 90000;
+const SYNC_QUOTA = 102400; // chrome.storage.sync.QUOTA_BYTES
+const LOCAL_QUOTA = 10485760; // chrome.storage.local ~10MB
+
+interface Usage { usedBytes: number; quotaBytes: number; percent: number }
+
+async function usage(): Promise<Usage> {
+  try {
+    const area = mode === 'sync' ? chrome.storage.sync : chrome.storage.local;
+    const usedBytes = await area.getBytesInUse(null);
+    const quotaBytes = mode === 'sync' ? SYNC_QUOTA : LOCAL_QUOTA;
+    return { usedBytes, quotaBytes, percent: Math.round((usedBytes / quotaBytes) * 1000) / 10 };
+  } catch {
+    return { usedBytes: 0, quotaBytes: mode === 'sync' ? SYNC_QUOTA : LOCAL_QUOTA, percent: 0 };
+  }
+}
 
 interface Payload {
   docs: Record<string, string>; // name → SKILL.md
@@ -198,13 +213,13 @@ export async function pullSkills(): Promise<{ pulled: boolean }> {
   }
 }
 
-export async function syncNow(): Promise<{ ok: boolean; error?: string; count: number; updatedAt: number; mode: 'sync' | 'local' }> {
+export async function syncNow(): Promise<{ ok: boolean; error?: string; count: number; updatedAt: number; mode: 'sync' | 'local'; usage: Usage }> {
   await persist();
   const p = await ready();
-  return { ok: !lastError, error: lastError || undefined, count: Object.keys(p.docs).length, updatedAt: p.updatedAt, mode };
+  return { ok: !lastError, error: lastError || undefined, count: Object.keys(p.docs).length, updatedAt: p.updatedAt, mode, usage: await usage() };
 }
 
-export async function syncStatus(): Promise<{ ok: boolean; error?: string; count: number; updatedAt: number; mode: 'sync' | 'local' }> {
+export async function syncStatus(): Promise<{ ok: boolean; error?: string; count: number; updatedAt: number; mode: 'sync' | 'local'; usage: Usage }> {
   const p = await ready();
-  return { ok: !lastError, error: lastError || undefined, count: Object.keys(p.docs).length, updatedAt: p.updatedAt, mode };
+  return { ok: !lastError, error: lastError || undefined, count: Object.keys(p.docs).length, updatedAt: p.updatedAt, mode, usage: await usage() };
 }

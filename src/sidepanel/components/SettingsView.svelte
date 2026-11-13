@@ -70,20 +70,24 @@ import { createZip, readZip } from '../../shared/zip';
     if (!res.ok) return;
     const st = res.status;
     const when = st.updatedAt ? new Date(st.updatedAt).toLocaleTimeString(lang === 'ar' ? 'ar' : 'en', { hour: '2-digit', minute: '2-digit' }) : '—';
+    const kb = (n: number) => `${(n / 1024).toFixed(1)}KB`;
+    const usage = st.usage ? `${kb(st.usage.usedBytes)} / ${kb(st.usage.quotaBytes)} (${st.usage.percent}%)` : '';
     skillsMsg = st.error
       ? `⚠️ ${st.error}`
       : lang === 'ar'
-        ? `${st.mode === 'sync' ? 'مزامنة مع حساب المتصفح' : 'نسخة محلية (sync غير متاح)'} — ${st.count} مهارة — ${when}`
-        : `${st.mode === 'sync' ? 'Synced with browser account' : 'Local fallback (sync unavailable)'} — ${st.count} skills — ${when}`;
+        ? `${st.mode === 'sync' ? 'مزامنة مع حساب المتصفح' : 'نسخة محلية (sync غير متاح)'} — ${st.count} مهارة — ${usage} — ${when}`
+        : `${st.mode === 'sync' ? 'Synced with browser account' : 'Local fallback (sync unavailable)'} — ${st.count} skills — ${usage} — ${when}`;
   }
 
   async function syncNow() {
     const res: any = await rpc('skills-sync', { now: true });
     if (res.ok) {
       const st = res.status;
+      const kb = (n: number) => `${(n / 1024).toFixed(1)}KB`;
+      const usage = st.usage ? `${kb(st.usage.usedBytes)} / ${kb(st.usage.quotaBytes)} (${st.usage.percent}%)` : '';
       skillsMsg = st.error
         ? `⚠️ ${st.error}`
-        : lang === 'ar' ? `تمت المزامنة (${st.count} مهارة)` : `Synced (${st.count} skills)`;
+        : lang === 'ar' ? `تمت المزامنة (${st.count} مهارة — ${usage})` : `Synced (${st.count} skills — ${usage})`;
     }
     await refreshSyncStatus();
   }
