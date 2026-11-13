@@ -87,4 +87,5 @@ export interface SkillFile {
   steps: SkillStep[];
   version?: number;
   seedRev?: number; // -1 = عدّلها المستخدم فلا تُلمس عند الزرع
+  order?: number; // ترتيب العرض في تبويب المهارات
 }

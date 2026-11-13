@@ -108,7 +108,7 @@ export async function seedSkills() {
   const existing = (await chromeKV.get<Record<string, SkillFile>>('skills')) ?? {};
   for (const s of SEEDS) {
     const cur = existing[s.name];
-    if (!cur) { existing[s.name] = { ...s, seedRev: SEED_VERSION }; continue; }
+    if (!cur) { existing[s.name] = { ...s, seedRev: SEED_VERSION, order: SEEDS.indexOf(s) }; continue; }
     if (cur.seedRev === -1 || cur.seedRev === SEED_VERSION) continue; // عدّلها المستخدم أو محدثة
     // ترقية مهارة مبدئية: حدّث التعليمات مع الحفاظ على الملف المرفق والمعاملات
     existing[s.name] = { ...s, context: cur.context, params: cur.params, seedRev: SEED_VERSION };

@@ -5,13 +5,12 @@
   import { rpc } from '../lib/port';
 
   let {
-    skills, lang, run: runSkill, remove, importJson, refresh,
+    skills, lang, run: runSkill, remove, refresh,
   }: {
     skills: SkillFile[];
     lang: Lang;
     run: (name: string, params: Record<string, string>) => void;
     remove: (name: string) => void;
-    importJson: (json: string) => void;
     refresh: () => void;
   } = $props();
 
@@ -27,6 +26,34 @@
   let editErr = $state('');
   let fileMsg = $state('');
 
+  // إعادة الترتيب
+  let dragName = $state<string | null>(null);
+  let dragOver = $state<string | null>(null);
+
+  async function persistOrder(list: SkillFile[]) {
+    await rpc('reorder-skills', { names: list.map((s) => s.name) });
+    refresh();
+  }
+  function move(name: string, dir: -1 | 1) {
+    const list = [...skills];
+    const i = list.findIndex((s) => s.name === name);
+    const j = i + dir;
+    if (i < 0 || j < 0 || j >= list.length) return;
+    [list[i], list[j]] = [list[j], list[i]];
+    persistOrder(list);
+  }
+  function onDrop(targetName: string) {
+    if (!dragName || dragName === targetName) { dragName = null; dragOver = null; return; }
+    const list = [...skills];
+    const from = list.findIndex((s) => s.name === dragName);
+    const to = list.findIndex((s) => s.name === targetName);
+    if (from < 0 || to < 0) return;
+    const [item] = list.splice(from, 1);
+    list.splice(to, 0, item);
+    dragName = null; dragOver = null;
+    persistOrder(list);
+  }
+
   const L = $derived(lang === 'ar' ? {
     run: 'تشغيل', del: 'حذف', exp: 'تصدير', imp: 'استيراد JSON',
     none: 'لا مهارات محفوظة بعد', ph: 'الصق ملف المهارة JSON هنا', save: 'حفظ', cancel: 'إلغاء',
@@ -34,7 +61,8 @@
     playbook: 'مهارة إجرائية', settings: 'إعدادات المهارة', desc: 'الوصف', when: 'متى تُستخدم (المشكلة)',
     site: 'الموقع/النطاق', notes: 'ملاحظات وقيود', instructions: 'التعليمات (Playbook)',
     context: 'ملف مرفق Markdown (مثل CV.md)', attach: '📎 رفع ملف .md', attached: 'مرفق',
-    params: 'معاملات', emptyFile: 'لا ملف مرفق',
+    params: 'معاملات', emptyFile: 'لا ملف مرفق', expAll: 'تصدير الكل',
+    dragHint: 'اسحب البطاقة أو استخدم ↑↓ لتغيير الترتيب',
   } : {
     run: 'Run', del: 'Delete', exp: 'Export', imp: 'Import JSON',
     none: 'No saved skills yet', ph: 'Paste skill JSON here', save: 'Save', cancel: 'Cancel',
@@ -42,7 +70,8 @@
     playbook: 'Playbook', settings: 'Skill settings', desc: 'Description', when: 'When to use (problem)',
     site: 'Site/domain', notes: 'Notes & limits', instructions: 'Instructions (playbook)',
     context: 'Attached markdown (e.g. CV.md)', attach: '📎 Upload .md', attached: 'attached',
-    params: 'Params', emptyFile: 'No file attached',
+    params: 'Params', emptyFile: 'No file attached', expAll: 'Export all',
+    dragHint: 'Drag a card or use ↑↓ to reorder',
   });
 
   function toggle(s: SkillFile) {
@@ -75,6 +104,35 @@
     editing = null;
     refresh();
   }
+  async function importAll(json: string) {
+    try {
+      const parsed = JSON.parse(json);
+      const list: any[] = Array.isArray(parsed) ? parsed : [parsed];
+      let ok = 0;
+      const errs: string[] = [];
+      for (const skill of list) {
+        const res: any = await rpc('import-skill', { skill });
+        if (res.ok) ok++;
+        else errs.push(`${skill?.name ?? '?'}: ${res.error}`);
+      }
+      importing = false;
+      importText = '';
+      refresh();
+      if (errs.length) alert(`تم استيراد ${ok} — أخطاء:\n${errs.join('\n')}`);
+    } catch (e: any) {
+      alert(`JSON غير صالح: ${e.message}`);
+    }
+  }
+
+  function exportAll() {
+    const url = URL.createObjectURL(new Blob([JSON.stringify(skills, null, 2)], { type: 'application/json' }));
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'browsemate-skills.json';
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
   async function pickFile(file: File | undefined) {
     if (!file) return;
     form.context = await file.text();
@@ -87,13 +145,26 @@
 
 <div class="view">
   <div class="list" dir={lang === 'ar' ? 'rtl' : 'ltr'}>
+    {#if skills.length}<div class="hint" style="padding-inline-start:4px">{L.dragHint}</div>{/if}
     {#if !skills.length}
       <div class="empty"><div class="logo">◈</div>{L.none}<div class="hint">{L.hint}</div></div>
     {/if}
-    {#each skills as s (s.name)}
-      <div class="card">
+    {#each skills as s, i (s.name)}
+      <div
+        class="card"
+        class:dragover={dragOver === s.name}
+        draggable="true"
+        ondragstart={(e) => { dragName = s.name; e.dataTransfer?.setData('text/plain', s.name); }}
+        ondragover={(e) => { e.preventDefault(); dragOver = s.name; }}
+        ondragleave={() => { if (dragOver === s.name) dragOver = null; }}
+        ondrop={(e) => { e.preventDefault(); onDrop(s.name); }}
+        ondragend={() => { dragName = null; dragOver = null; }}
+      >
         <div class="row1">
+          <span class="grip" title="اسحب للترتيب">⠿</span>
           <span class="title" role="button" tabindex="0" onclick={() => toggle(s)} onkeydown={(e) => e.key === 'Enter' && toggle(s)}>{s.name}</span>
+          <button class="mini" title="أعلى" disabled={i === 0} onclick={() => move(s.name, -1)}>↑</button>
+          <button class="mini" title="أسفل" disabled={i === skills.length - 1} onclick={() => move(s.name, 1)}>↓</button>
           <button class="mini accent" title={L.run} onclick={() => run(s)}>▶</button>
           <button class="mini" title={L.settings} onclick={() => openSettings(s)}>⚙</button>
           <button class="mini" title={L.exp} onclick={() => exportSkill(s)}>⤓</button>
@@ -136,11 +207,14 @@
         style="width:100%; font-size:11px; padding:8px; border-radius:9px; border:1px solid var(--border); background:var(--surface); color:var(--text)"
       ></textarea>
       <div style="display:flex; gap:6px; margin-top:6px">
-        <button class="btn" style="padding:7px 14px" onclick={() => { importJson(importText); importText = ''; importing = false; }}>{L.save}</button>
+        <button class="btn" style="padding:7px 14px" onclick={() => importAll(importText)}>{L.save}</button>
         <button class="btn ghost" style="padding:7px 12px" onclick={() => (importing = false)}>✕</button>
       </div>
     {:else}
-      <button class="mini" onclick={() => (importing = true)}>⇪ {L.imp}</button>
+      <div style="display:flex; gap:6px; flex-wrap:wrap">
+        <button class="mini" onclick={() => (importing = true)}>⇪ {L.imp}</button>
+        <button class="mini" disabled={!skills.length} onclick={exportAll}>⤓ {L.expAll}</button>
+      </div>
     {/if}
   </div>
 </div>

@@ -200,16 +200,6 @@
     await rpc('delete-skill', { name });
     await refreshSkills();
   }
-  async function importSkill(json: string) {
-    try {
-      const skill = JSON.parse(json);
-      const res: any = await rpc('import-skill', { skill });
-      if (!res.ok) alert(res.error);
-      else await refreshSkills();
-    } catch (e: any) {
-      alert(`JSON غير صالح: ${e.message}`);
-    }
-  }
 
   async function setLangUi(l: Lang) {
     lang = l;
@@ -245,7 +235,7 @@
         openSession={openSession} createSession={newSession} removeSession={deleteSession}
       />
     {:else if tab === 'skills'}
-      <SkillList {skills} {lang} run={runSkill} remove={deleteSkill} importJson={importSkill} refresh={refreshSkills} />
+      <SkillList {skills} {lang} run={runSkill} remove={deleteSkill} refresh={refreshSkills} />
     {:else}
       <SettingsView {lang} setUiLang={setLangUi} />
     {/if}

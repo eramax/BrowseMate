@@ -108,7 +108,18 @@ chrome.runtime.onMessage.addListener((msg: any, _s, send) => {
         }
         case 'list-skills': {
           const all = (await chromeKV.get<Record<string, SkillFile>>('skills')) ?? {};
-          send({ ok: true, skills: Object.values(all) });
+          const skills = Object.values(all).sort(
+            (a, b) => (a.order ?? 1e9) - (b.order ?? 1e9) || a.name.localeCompare(b.name),
+          );
+          send({ ok: true, skills });
+          break;
+        }
+        case 'reorder-skills': {
+          const all = (await chromeKV.get<Record<string, SkillFile>>('skills')) ?? {};
+          const names: string[] = Array.isArray(msg.names) ? msg.names : [];
+          names.forEach((n, i) => { if (all[n]) all[n] = { ...all[n], order: i }; });
+          await chromeKV.set('skills', all);
+          send({ ok: true });
           break;
         }
         case 'import-skill': {
