@@ -257,6 +257,7 @@ export interface ToolContext {
   getActiveTab: () => Promise<chrome.tabs.Tab>;
   emit: (evt: WorkerToPanel) => void;
   requestApproval: (tool: string, args: unknown, steps?: string[]) => Promise<boolean>;
+  signal?: AbortSignal; // إلغاء المستخدم للـ run الحالي (يُملأ من agent.ts)
 }
 
 // ملف مهارة
@@ -1290,9 +1291,9 @@ export async function runSkill(skill: SkillFile, params: Record<string, unknown>
       return { ok: false, error: 'ألغى المستخدم', results, results2: undefined };
     }
     try {
+      deps.emit({ type: 'skill-progress', skill: skill.name, step: i + 1, total: skill.steps.length }); // قبل التنفيذ ليظهر "جارٍ…"
       const result = await tool.execute(args, {} as any);
       results.push({ step: i, tool: step.tool, args, result, ts: Date.now() });
-      deps.emit({ type: 'skill-progress', skill: skill.name, step: i + 1, total: skill.steps.length });
     } catch (e: any) {
       return { ok: false, error: e?.message ?? String(e), results };
     }
@@ -1306,7 +1307,7 @@ export async function runSkill(skill: SkillFile, params: Record<string, unknown>
 ```ts
 emit: (evt) => ctx.emit(evt as WorkerToPanel),
 ```
-وفي `runSkill` مرر runId ضمن الحدث، وفي ChatView.svelte أضف سطر تقدم حي "خطوة 2/3: جاري القراءة…" يظهر أثناء عمل مهارة ويختفي عند done.
+مرر runId الحقيقي للـ run عند توفره (مرر `runId` من إغلاق agent عبر ToolContext إن أردت ربط التقدم بالرسالة الحية؛ يمكن تركه فارغاً في MVP ويعرض التقدم كسطر مستقل)، وفي ChatView.svelte أضف سطر تقدم حي "خطوة 2/3: جاري القراءة…" يظهر أثناء عمل مهارة ويختفي عند done.
 
 - [ ] **Step 5: skillTools.ts** — أربع أدوات:
 
@@ -1332,7 +1333,7 @@ register({
   execute: async (a, ctx: ToolContext) => {
     const skill = (await skillKV.all())[a.name];
     if (!skill) return { error: `مهارة غير موجودة: ${a.name}` };
-    const planSteps = skill.steps.map((s) => s.tool);
+    const planSteps = skill.steps.map((s) => s.approval === true ? `${s.tool} ⚠` : s.tool); // ⚠ = معلمة موافقة (معلَّمة في بطاقة الدفعة)
     const ok = await ctx.requestApproval(a.name, { params: a.params }, planSteps); // موافقة مجمعة
     if (!ok) return { error: 'REFUSED_BY_USER' };
     return { ...(await runSkill(skill, a.params ?? {}, {
@@ -1370,7 +1371,7 @@ register({
 });
 ```
 
-- [ ] **Step 6: SkillList.svelte** — تبويب في الـ panel يعرض المهارات من `list_skills` مع أزرار "تشغيل" (يملأ params من حقول نصية ثم يرسل رسالة شات `شغّل المهارة <name> بمعاملات …`) و"حذف"، وزر "استيراد JSON" (لصق + حفظ عبر save_settings-نمط رسالة جديدة `import-skill` في index.ts تستدعي validateSkill ثم تحفظ).
+- [ ] **Step 6: SkillList.svelte** — تبويب في الـ panel يعرض المهارات من `list_skills` مع أزرار "تشغيل" (يملأ params من حقول نصية ثم يرسل رسالة شات `شغّل المهارة <name> بمعاملات …`) و"حذف" و**"تصدير"** (تنزيل ملف JSON للمهارة — تنزيل عبر Blob URL)، وزر "استيراد JSON" (لصق + حفظ عبر معالج `import-skill` في index.ts يستدعي validateSkill ثم يحفظ).
 - [ ] **Step 7: Commit** — `git add -A && git commit -m "feat: skill engine (run/validate) and skill tools with UI"`
 
 ---
