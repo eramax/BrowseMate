@@ -1,7 +1,7 @@
 // مهارات مبدئية تُزرع مرة واحدة عند أول تشغيل — لا تعيد إضافة ما حذفه المستخدم
 import type { SkillFile } from '../shared/types';
 
-const SEED_VERSION = 12;
+const SEED_VERSION = 17;
 
 const SEEDS: SkillFile[] = [
   {
@@ -101,24 +101,28 @@ const SEEDS: SkillFile[] = [
   },
   {
     name: 'web-builder',
-    description: 'يصمم موقع/صفحة ويب كاملة (Frontend فقط) بملف HTML واحد ويعاينها ويعدّلها بـ diff',
-    whenToUse: 'عندما تطلب تصميم موقع أو صفحة هبوط أو واجهة، وتريد معاينتها وتعديلها وتحميلها كملف واحد',
+    description: 'يبني موقعاً/تطبيق ويب كاملاً (Frontend فقط) كملف HTML واحد ويعاينه ويعدّله بـ diff',
+    whenToUse: 'عندما تطلب تصميم موقع أو تطبيق ويب أو واجهة، وتريد معاينته وتعديله وتنزيله',
     site: 'أي متصفح',
-    notes: 'ملف HTML واحد، بدون npm/build. التعديلات diff دقيقة — لا تعد كتابة الملف كاملاً.',
-    instructions: `مهمتك: تصميم موقع ويب (Frontend فقط) وتقديمه كملف HTML واحد.
-1) البداية: إن طلب تطبيق مهام/قائمة تفاعلية استخدم render_app (kind=todo) — لا تكتب JS يدوياً. غير ذلك استخدم render_site ببيانات منظمة (brand, theme, accent, nav, sections: hero/features/about/pricing/testimonials/faq/gallery/contact/cta).
-2) إذا أعاد preview_html/render_site خطأ validation (HTML أو JavaScript) فاستخدم site_read ثم site_edit لإصلاح السطر المحدد — لا تعد التوليد الكامل. بعد كل معاينة ناجحة استدعِ preview_diagnostics وأصلح أي أخطاء (حتى مرتين).
-3) للتعديلات: لا تعد توليد الموقع. استدعِ site_read مرة لرؤية النص الحرفي، ثم site_edit بتعديلات diff [{oldText,newText}] — استخدم سياقاً كافياً ليكون oldText فريداً. يمكن عدة تعديلات في نداء واحد (كلها أو لا شيء). بعد النجاح تحقق بـ preview_diagnostics.
-4) للتصاميم المخصصة/التطبيقات فقط استخدم preview_html، ويمكن تعديلها بنفس site_edit. قواعد كتابة الملف إلزامية:
-   - هيكل صحيح: <!doctype html> ثم <html> و<head> مع <title>...</title> مغلق و</head> ثم <body>...</body></html>.
-   - JavaScript بسيط: استخدم addEventListener فقط (لا onclick داخل HTML)، لا تستخدم قوالب نصية متداخلة، لا تضع كيانات HTML مثل &#39; داخل نصوص JS، واستخدم textContent بدل innerHTML عند الإمكان.
-   - لا تضع "</script>" داخل أي سلسلة JS. لا تعتمد على ملفات خارجية؛ كل CSS/JS داخل الملف (CDN مسموح).
-   - لا تستخدم localStorage مباشرة إن لم تحتج (المعاينة توفر بديلاً في الذاكرة).
-   - للقوائم والمهام: لا تستخدم innerHTML ولا دالة escapeHtml؛ أنشئ العناصر بـ document.createElement وtextContent. هذا يمنع أخطاء الاقتباس نهائياً.
-   - لا تعِد إرسال نفس HTML بعد خطأ تحقق؛ استخدم site_read ثم site_edit لإصلاح السطر المحدد فقط.
-   - إن أعاد preview_html خطأ JavaScript/HTML فاقرأ الملف بـ site_read وأصلح السطر المذكور بـ site_edit — لا تعد التوليد الكامل.
-5) عند الخطأ: site_undo للتراجع عن آخر تعديل.
-6) اعرض ملخصاً قصيراً فقط؛ زر التحميل يظهر في الشات.`,
+    notes: 'ملف HTML واحد (CSS/JS داخله) بدون npm/build. الكتابة الأولى بـ ws_write، ثم الإضافة بـ ws_append والتعديل/الإدراج بـ ws_patch (diff).',
+    instructions: `مهمتك: بناء موقع/تطبيق ويب (Frontend فقط) كملف HTML واحد يحتوي CSS وJS داخله. لا تستخدم أي قالب جاهز ولا تفترض نوع المشروع. اجعله Single Page: كل الشاشات/الأقسام داخل نفس الملف.
+1) اكتب index.html مرة واحدة عبر ws_write. ابدأ بالجزء الأول (head + style + بداية body). لا تحاول كتابة الملف كله إن كان طويلاً.
+2) بعد الكتابة الأولى لا تستخدم ws_write مرة أخرى. استخدم:
+   - ws_append لإضافة الجزء التالي في نهاية الملف (استكمال chunk).
+   - ws_patch لتعديل أو إدراج جزء في مكان محدد: oldText فريد → newText يحتوي الجزء الجديد. هذا هو diff، وهو الطريقة الأساسية لأي تعديل لاحق.
+3) بعد كل جزء اقرأ complete وtail من نتيجة الأداة: إن كانت complete:false أكمل بـ ws_append أو ws_patch. لا تكرر نفس الجزء، ولا تعد إرسال الملف كاملاً.
+4) ws_read لرؤية النص الحرفي قبل patch. ws_list لمراجعة الملف.
+5) ws_preview للمعاينة. إن أعاد خطأ HTML/JS: اقرأ الملف بـ ws_read ثم أصلح السطر المذكور بـ ws_patch. رقم السطر في الرسالة مطلق داخل الملف. لا تعد توليد الملف.
+6) بعد نجاح المعاينة: preview_diagnostics، وأصلح أخطاء console بـ ws_patch (حتى مرتين).
+7) ws_download لتنزيل الملف، أو اترك زر التحميل في الشات.
+8) قواعد الكود:
+   - HTML صحيح ومغلق: <!doctype html> ... </html>.
+   - استخدم addEventListener فقط (لا onclick داخل HTML)، ولا تضع "</script>" داخل أي سلسلة JS.
+   - لبناء العناصر ديناميكياً: document.createElement وtextContent؛ لا innerHTML لبيانات المستخدم.
+   - إن احتجت دالة escape، استخدم هذا النمط الصحيح: const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+     لا تكتب ''' مطلقاً.
+   - كل CSS/JS داخل الملف. CDN مسموح.
+9) لا تنهِ دورك بوعد («سأصلح»، «سأعيد») بدون تنفيذ الأداة في نفس الدور. اعرض ملخصاً قصيراً فقط.`,
     params: [],
     steps: [],
     version: 1,

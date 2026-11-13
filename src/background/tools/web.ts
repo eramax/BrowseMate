@@ -1,53 +1,15 @@
-// أدوات الموقع: render_site (قالب منظم) + preview_html (حر) + preview_diagnostics
+// أدوات الموقع: preview_html (حر) + site_read/site_edit/site_undo + preview_diagnostics
 import { z } from 'zod';
 import { register } from './registry';
-import { renderSiteHtml, type SiteData } from '../site-template';
-import { renderTodoApp } from '../app-template';
 import { openPreview } from '../preview';
 import { chromeKV } from '../../shared/storage';
 import { getSite, saveSite, undoSite } from '../site-store';
 import { applyEdits, type Edit } from '../site-edit';
 
-const item = <T extends z.ZodTypeAny>(x: T) => z.array(x);
-
-register({
-  name: 'render_site',
-  description:
-    'يبني موقعاً/صفحة هبوط كاملة بملف HTML واحد من بيانات منظمة (سريع وموثوق، تصميم احترافي responsive). استخدمه بدل كتابة HTML. الأقسام المتاحة: hero, features, about, pricing, testimonials, faq, gallery, contact, cta. بعد المعاينة استدعِ preview_diagnostics لأخطاء console.',
-  sensitive: false,
-  schema: z.object({
-    brand: z.string().describe('اسم العلامة/الموقع'),
-    tagline: z.string().optional(),
-    theme: z.enum(['dark', 'light']).optional(),
-    accent: z.string().optional().describe('لون hex مثل #7c9cff'),
-    nav: z.array(z.string()).optional().describe('عناصر القائمة'),
-    footer: z.string().optional(),
-    filename: z.string().optional().describe('مثل index.html'),
-    sections: z.array(z.union([
-      z.object({ type: z.literal('hero'), title: z.string(), subtitle: z.string().optional(), badge: z.string().optional(), cta: z.string().optional(), secondary: z.string().optional() }),
-      z.object({ type: z.literal('features'), title: z.string().optional(), items: z.array(z.object({ icon: z.string().optional(), title: z.string(), text: z.string() })) }),
-      z.object({ type: z.literal('about'), title: z.string().optional(), text: z.string(), bullets: z.array(z.string()).optional() }),
-      z.object({ type: z.literal('pricing'), title: z.string().optional(), plans: z.array(z.object({ name: z.string(), price: z.string(), period: z.string().optional(), features: z.array(z.string()), cta: z.string().optional(), featured: z.boolean().optional() })) }),
-      z.object({ type: z.literal('testimonials'), title: z.string().optional(), items: z.array(z.object({ quote: z.string(), name: z.string(), role: z.string().optional() })) }),
-      z.object({ type: z.literal('faq'), title: z.string().optional(), items: z.array(z.object({ q: z.string(), a: z.string() })) }),
-      z.object({ type: z.literal('gallery'), title: z.string().optional(), images: z.array(z.object({ url: z.string(), alt: z.string().optional() })) }),
-      z.object({ type: z.literal('contact'), title: z.string().optional(), text: z.string().optional(), email: z.string().optional(), phone: z.string().optional() }),
-      z.object({ type: z.literal('cta'), title: z.string(), text: z.string().optional(), button: z.string().optional() }),
-    ])).min(1),
-  }),
-  execute: async (a) => {
-    const html = renderSiteHtml(a as unknown as SiteData);
-    const filename = a.filename || 'index.html';
-    const result = await openPreview(html, filename);
-    if (result.artifact?.id) await saveSite({ id: result.artifact.id, filename, html, version: 1, updatedAt: Date.now() }, false);
-    return result;
-  },
-});
-
 register({
   name: 'preview_html',
   description:
-    'يعاين HTML كامل كتبته بنفسك (للتصاميم المخصصة) في تبويب ويضيف زر تحميل. فضّل render_site للصفحات القياسية. بعد المعاينة استدعِ preview_diagnostics.',
+    'يعاين HTML كاملاً كتبته بنفسك (أي صفحة أو تطبيق) في تبويب ويضيف زر تحميل. اكتب الكود كاملاً، ثم استدعِ preview_diagnostics بعد المعاينة.',
   sensitive: false,
   schema: z.object({
     html: z.string().min(50).describe('مستند HTML كامل يبدأ بـ <!doctype html>'),
@@ -62,31 +24,6 @@ register({
 });
 
 register({
-  name: 'render_app',
-  description:
-    'ينشئ تطبيق ويب جاهزاً ومُختبَراً (حالياً: todo list تفاعلي مع إضافة/إنجاز/حذف/تصفية/مسح + حفظ محلي + وضع داكن/فاتح) بملف HTML واحد. استخدمه بدل كتابة كود التطبيق يدوياً.',
-  sensitive: false,
-  schema: z.object({
-    kind: z.literal('todo'),
-    title: z.string().optional(),
-    subtitle: z.string().optional(),
-    placeholder: z.string().optional(),
-    theme: z.enum(['dark', 'light']).optional(),
-    accent: z.string().optional().describe('hex مثل #7c9cff'),
-    lang: z.enum(['ar', 'en']).optional(),
-    filename: z.string().optional(),
-  }),
-  execute: async (a) => {
-    const html = renderTodoApp(a);
-    const filename = a.filename || (a.lang === 'en' ? 'todo-app.html' : 'todo-app.html');
-    const result = await openPreview(html, filename);
-    if (result.artifact?.id)
-      await saveSite({ id: result.artifact.id, filename, html, version: 1, updatedAt: Date.now() }, false);
-    return result;
-  },
-});
-
-register({
   name: 'site_read',
   description:
     'يقرأ الملف الحالي للموقع (HTML) لتحريره بـ site_edit. استخدمه مرة واحدة عند الحاجة للتعديل، ولا تعد كتابة الملف كاملاً.',
@@ -94,7 +31,7 @@ register({
   schema: z.object({}),
   execute: async () => {
     const ws = await getSite();
-    if (!ws) return { error: 'لا يوجد موقع حالي — استخدم render_site أو preview_html أولاً.' };
+    if (!ws) return { error: 'لا يوجد ملف حالي — استخدم preview_html أولاً.' };
     return { filename: ws.filename, version: ws.version, bytes: ws.html.length, html: ws.html.slice(0, 90000) };
   },
 });
@@ -113,7 +50,7 @@ register({
   }),
   execute: async (a) => {
     const ws = await getSite();
-    if (!ws) return { error: 'لا يوجد موقع حالي — استخدم render_site أولاً.' };
+    if (!ws) return { error: 'لا يوجد ملف حالي — استخدم preview_html أولاً.' };
     const r = applyEdits(ws.html, a.edits as Edit[]);
     if (!r.ok) return { error: r.error, failedIndex: r.failedIndex, hint: 'اقرأ الملف بـ site_read ثم أعد المحاولة.' };
     const next = { ...ws, html: r.html, version: ws.version + 1, updatedAt: Date.now() };

@@ -61,6 +61,8 @@ export interface ToolContext {
   seenCalls?: Map<string, number>;
   /** عدد استدعاءات الأدوات في هذا التشغيل */
   callCount?: { value: number };
+  /** آخر خطأ تحقق لكل ملف — لكشف التعديلات التي لا تُحدث تقدماً */
+  lastPatchError?: Map<string, string>;
 }
 
 export type ApprovalMode = 'sensitive' | 'always' | 'never';

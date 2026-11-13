@@ -1,13 +1,27 @@
-// صفحة المعاينة (امتداد حقيقي): تحمّل HTML من التخزين وتمرره لصفحة sandbox
+// صفحة المعاينة (امتداد حقيقي): تحمّل HTML من التخزين وتمرره لصفحة sandbox.
+// قالب المعاينة يتبع لغة الإضافة (settings.lang) واتجاهها، ويبقى داخل الامتداد.
 (function () {
   'use strict';
   var id = new URLSearchParams(location.search).get('id') || '';
   var frame = document.getElementById('frame');
-  frame.src = chrome.runtime.getURL('src/preview/sandbox.html');
   var nameEl = document.getElementById('name');
   var statusEl = document.getElementById('status');
   var logs = [];
   var ready = false;
+  var lang = 'en';
+
+  function t(en, ar) { return lang === 'ar' ? ar : en; }
+
+  function applyLang() {
+    document.documentElement.lang = lang;
+    document.documentElement.dir = lang === 'ar' ? 'rtl' : 'ltr';
+    document.title = t('Preview', 'معاينة') + ' — BrowseMate';
+    document.getElementById('reload').textContent = t('Reload', 'إعادة تحميل');
+    document.getElementById('download').textContent = t('Download', 'تنزيل');
+    if (!nameEl.textContent || nameEl.textContent === 'Preview' || nameEl.textContent === 'معاينة')
+      nameEl.textContent = t('Preview', 'معاينة');
+    setStatus();
+  }
 
   function sendLogs() {
     if (!id || !logs.length) return;
@@ -18,9 +32,9 @@
   function setStatus() {
     var errs = 0, warns = 0;
     logs.forEach(function (l) { if (l.level === 'error') errs++; else if (l.level === 'warn') warns++; });
-    if (errs) { statusEl.className = 'status err'; statusEl.textContent = '⚠ ' + errs + ' error(s)'; }
-    else if (warns) { statusEl.className = 'status warn'; statusEl.textContent = '⚠ ' + warns + ' warning(s)'; }
-    else { statusEl.className = 'status'; statusEl.textContent = 'ready'; }
+    if (errs) { statusEl.className = 'status err'; statusEl.textContent = '⚠ ' + errs + ' ' + t('error(s)', 'أخطاء'); }
+    else if (warns) { statusEl.className = 'status warn'; statusEl.textContent = '⚠ ' + warns + ' ' + t('warning(s)', 'تحذيرات'); }
+    else { statusEl.className = 'status'; statusEl.textContent = t('ready', 'جاهز'); }
   }
 
   var shim = '<script>(function(){try{' +
@@ -49,19 +63,22 @@
 
   function load() {
     statusEl.className = 'status';
-    statusEl.textContent = 'loading…';
+    statusEl.textContent = t('loading…', 'جارٍ التحميل…');
     chrome.runtime.sendMessage({ type: 'get-artifact-html', id: id }, function (res) {
       if (!res || !res.ok) {
         statusEl.className = 'status err';
-        statusEl.textContent = 'document not found';
+        statusEl.textContent = t('document not found', 'المستند غير موجود');
         return;
       }
-      nameEl.textContent = res.filename || 'Preview';
-      document.title = 'Preview — ' + (res.filename || '');
+      nameEl.textContent = res.filename || t('Preview', 'معاينة');
+      document.title = t('Preview', 'معاينة') + ' — ' + (res.filename || '');
       var html = inject(res.html || '');
       if (ready) frame.contentWindow.postMessage({ __bmRender: true, html: html }, '*');
-      else frame._pending = html;    });
+      else frame._pending = html;
+    });
   }
+
+  frame.src = chrome.runtime.getURL('src/preview/sandbox.html');
 
   window.addEventListener('message', function (e) {
     var d = e.data;
@@ -101,6 +118,24 @@
     });
   });
 
-  load();
+  // اقرأ لغة الإضافة أولاً، ثم طبّق القالب وابدأ التحميل (مع مهلة احتياطية).
+  var started = false;
+  function start() {
+    if (started) return;
+    started = true;
+    applyLang();
+    load();
+  }
+  try {
+    chrome.storage.local.get('settings', function (res) {
+      if (res && res.settings && res.settings.lang === 'ar') lang = 'ar';
+      start();
+    });
+    setTimeout(start, 500);
+  } catch (e) {
+    start();
+  }
+
+  applyLang();
   setInterval(sendLogs, 1200);
 })();

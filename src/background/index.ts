@@ -23,6 +23,7 @@ import './tools/youtube';
 import './tools/cv';
 import './tools/doc';
 import './tools/web';
+import './tools/workspace';
 import './tools/skillTools';
 
 const sessions = createSessionStore(chromeKV);

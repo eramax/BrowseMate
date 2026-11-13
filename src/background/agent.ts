@@ -30,6 +30,7 @@ const SYSTEM = `أنت BrowseMate — وكيل متصفح داخل إضافة ك
 ثم نفّذ الأدوات. الموافقة على الخطة تُغطي تسلسلها كاملاً.
 - اقرأ الصفحة (read_page) قبل أي تعديل للحصول على معرفات العناصر.
 - لا تكرر أداة فشلت بنفس الوسائط؛ غيّر النهج واسأل المستخدم عند الحاجة.
+- إن وعدت بإصلاح أو إعادة محاولة، نفّذ الأداة في نفس الدور. لا تنهِ دورك بجملة «سأصلح» أو «سأعيد» بدون تنفيذ.
 - بعد الانتهاء من الأدوات يجب أن تكتب ردًا نهائيًا يلخّص النتيجة — لا تنهِ دورك بأداة فقط.
 - لإنشاء مستندات منسقة (سيرة، خطاب، تقرير): استخدم render_cv أو render_document ببيانات منظمة. لا تكتب HTML ولا تستخدم export_pdf إلا إذا طلب المستخدم PDF مباشراً.
 - عندما يطلب المستخدم تحويل إجراء/خطوات إلى مهارة: استدعِ save_skill_from_run فوراً. المهارة يجب أن تكون عامة قابلة لإعادة الاستخدام: حدّد whenToUse (المشكلة)، وsite إن كانت للموقع نفسه، ومرّر replacements لتحويل القيم المحددة (روابط، كلمات بحث، أسماء) إلى معاملات {{param}}، وعرّفها في params مع description وexample. لا تعرض JSON ولا تطلب تأكيداً. لا تقل "تم الحفظ" إلا إذا أعادت الأداة saved.
@@ -89,6 +90,7 @@ export async function runChat(deps: AgentDeps, sessionId: string, userText: stri
     const ctx: ToolContext = {
       seenCalls: new Map<string, number>(),
       callCount: { value: 0 },
+      lastPatchError: new Map<string, string>(),
       getActiveTab: deps.getActiveTab,
       emit: (e) => deps.emit(sessionId, e),
       signal: ac.signal,

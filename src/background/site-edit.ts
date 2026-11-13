@@ -18,7 +18,7 @@ export function applyEdits(html: string, edits: Edit[]): EditResult {
       return {
         ok: false,
         failedIndex: i,
-        error: `تعديل ${i + 1}: لم أجد oldText في الملف. اقرأ الملف بـ site_read واستخدم نصاً مطابقاً حرفياً (بما فيه المسافات).`,
+        error: `تعديل ${i + 1}: لم أجد oldText في الملف. اقرأ الملف أولاً (site_read أو ws_read) واستخدم نصاً مطابقاً حرفياً (بما فيه المسافات).`,
       };
     }
     if (count > 1 && !e.all) {
