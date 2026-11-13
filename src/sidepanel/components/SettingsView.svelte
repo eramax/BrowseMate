@@ -34,12 +34,13 @@
 
   async function fetchModels(silent = false) {
     if (!baseUrl || !apiKey) { if (!silent) notice = L.fillFirst; return; }
+    await rpc('save-settings', { patch: { baseUrl, apiKey } }); // حفظ ما في الحقول قبل الجلب
     const res: any = await rpc('list-models');
     if (res.ok) {
       models = res.models;
       if (!models.includes(model)) model = models[0] ?? '';
     } else {
-      notice = res.error;
+      notice = res.error === 'FILL_FIRST' ? L.fillFirst : res.error;
     }
   }
 
