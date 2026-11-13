@@ -63,13 +63,11 @@
     </div>
     <div class="field">
       <label>{L.model}</label>
-      {#if models.length}
-        <select bind:value={model}>
-          {#each models as m}<option value={m}>{m}</option>{/each}
-        </select>
-      {:else}
-        <input bind:value={model} dir="ltr" placeholder={L.select} spellcheck="false" />
-      {/if}
+      <input bind:value={model} list="bm-models" dir="ltr" placeholder={L.select} spellcheck="false" autocomplete="off" />
+      <datalist id="bm-models">
+        {#each models as m}<option value={m}></option>{/each}
+      </datalist>
+      <div class="hint">{#if models.length}{models.length} نموذج — اكتب للبحث{:else}{L.select}{/if}</div>
       <button class="mini" style="margin-top:6px; width:fit-content" onclick={() => fetchModels()}>⇩ {L.fetch}</button>
     </div>
     <div class="field">
