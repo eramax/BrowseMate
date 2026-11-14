@@ -272,6 +272,13 @@ export function edgeStop(): void {
   edgeActiveTabId = null;
 }
 
+/** إيقاف فوري مع انتظار إغلاق الـ WS — يُستخدم قبل إعادة القراءة بسرعة جديدة */
+export async function edgeCancel(): Promise<void> {
+  edgeEpoch++;
+  await sendOffscreen({ type: 'edge-stop' }).catch(() => {});
+  edgeActiveTabId = null;
+}
+
 export function edgePause(): void {
   void sendOffscreen({ type: 'edge-pause' });
 }

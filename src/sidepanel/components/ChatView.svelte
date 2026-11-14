@@ -69,6 +69,23 @@
 
   const currentTitle = $derived(sessions.find((s) => s.id === currentId)?.title ?? L.newSession);
   const runningTool = $derived(toolCalls.find((c) => c.status === 'running')?.name);
+  // نخفي نسخة السجل أثناء التشغيل حتى لا تظهر الرسالة الصوتية مرتين
+  const activeHistoryVoiceId = $derived.by(() => {
+    if (!ttsState?.active) return '';
+    const rev = [...messages].reverse();
+    for (const m of rev) {
+      for (const v of [...(m.voices ?? [])].reverse()) {
+        if (v.text === ttsState.text && (v.voice || '') === (ttsState.voice || '')) return v.id;
+      }
+    }
+    if (ttsState.tabId != null) {
+      for (const m of rev) {
+        const v = m.voices?.[m.voices.length - 1];
+        if (v) return v.id;
+      }
+    }
+    return '';
+  });
   const suggestions = $derived(lang === 'ar' ? [
     'لخّص هذه الصفحة',
     'ما أخطاء console في هذه الصفحة؟',
@@ -135,7 +152,7 @@
 
   <div class="msgs" bind:this={scroller}>
     {#each messages as m (m.id)}
-      <Message msg={m} {lang} />
+      <Message msg={m} {lang} activeVoiceId={activeHistoryVoiceId} />
     {/each}
 
     {#if busy}
@@ -150,7 +167,7 @@
         </div>
       {/if}
       {#if liveText}
-        <Message msg={{ id: 'live', role: 'assistant', content: liveText, ts: 0 }} />
+        <Message msg={{ id: 'live', role: 'assistant', content: liveText, ts: 0 }} {lang} activeVoiceId={activeHistoryVoiceId} />
       {:else if !toolCalls.length}
         <div class="typing" dir={lang === 'ar' ? 'rtl' : 'ltr'}>
           <span class="dot"></span><span class="dot"></span><span class="dot"></span>
@@ -224,10 +241,13 @@
 
   <div class="composer" dir={lang === 'ar' ? 'rtl' : 'ltr'}>
     <textarea bind:value={text} onkeydown={onKey} placeholder={L.placeholder} rows="1"></textarea>
-    <button class="btn" onclick={submit} disabled={!text.trim()}>{lang === 'ar' ? 'إرسال' : 'Send'}</button>
-    {#if busy}
-      <button class="btn ghost" onclick={stop}>{L.stop}</button>
-    {/if}
+    <button
+      class="btn"
+      onclick={() => (busy && !text.trim() ? stop() : submit())}
+      disabled={!text.trim() && !busy}
+    >
+      {busy && !text.trim() ? L.stop : (lang === 'ar' ? 'إرسال' : 'Send')}
+    </button>
   </div>
 
   {#if !busy && messages.length && messages[messages.length - 1].content.includes('⚠️')}

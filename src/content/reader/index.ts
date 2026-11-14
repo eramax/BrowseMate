@@ -50,6 +50,15 @@ function notify(message: string): void {
   try { console.info('[BrowseMate Reader]', message); } catch { /* ignore */ }
 }
 
+/** يوقف الصوت الحالي ثم ينفّذ fn — لتطبيق السرعة الجديدة فوراً */
+function cancelAudioThen(fn: () => void): void {
+  try {
+    chrome.runtime.sendMessage({ type: 'tts-cancel-audio' }, () => fn());
+  } catch {
+    fn();
+  }
+}
+
 function stopReading(notify = true): void {
   if (notify) player.stop(); else player.silence();
   highlighter.clearAll();
@@ -193,10 +202,17 @@ function loadSettings(): void {
         wordColor: '#00bcd4',
       },
       (data) => {
+        const prevRate = player.getSettings().rate;
         const rate = Number(data?.rate);
         if (Number.isFinite(rate) && rate >= 0.5 && rate <= 2) {
           player.setSettings({ rate });
           overlay.setSpeed(rate);
+          if (isActive && rate !== prevRate) {
+            cancelAudioThen(() => {
+              player.silence();
+              readParagraph(currentPara);
+            });
+          }
         }
         const legacy = typeof data?.voice === 'string' ? data.voice : '';
         // العربية: Shakir افتراضياً حتى لو كان هناك صوت قديم محفوظ
@@ -259,8 +275,10 @@ overlay.setCallbacks({
     player.setSettings({ rate });
     try { chrome.storage.local.set({ rate }); } catch { /* ignore */ }
     if (isActive && player.getState() !== 'idle') {
-      player.silence();
-      readParagraph(currentPara);
+      cancelAudioThen(() => {
+        player.silence();
+        readParagraph(currentPara);
+      });
     }
   },
 });

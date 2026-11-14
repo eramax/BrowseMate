@@ -9,7 +9,7 @@ import { getArtifact } from './artifacts';
 import { debugStore, logSystemDebug } from './debug';
 import { chromeKV } from '../shared/storage';
 import { getTtsVoices, ttsPause, ttsResume, ttsSpeak, ttsStop } from './tts';
-import { edgePause, edgeResume, edgeSeek, edgeSpeak, edgeStop, fetchEdgeVoices } from './edge';
+import { edgeCancel, edgePause, edgeResume, edgeSeek, edgeSpeak, edgeStop, fetchEdgeVoices } from './edge';
 import { getTtsState, handleEdgeEvent, resetTtsState, setTtsEmitter, setTtsState, speakTextDirect } from './tts-session';
 import { validateSkill, buildSkillFromToolCalls } from './skills';
 import {
@@ -202,6 +202,12 @@ chrome.runtime.onMessage.addListener((msg: any, sender, send) => {
           edgeResume();
           setTtsState({ playing: true });
           if (tabId != null) chrome.tabs.sendMessage(tabId, { action: 'tts-event', type: 'resumed' }).catch(() => {});
+          send({ ok: true });
+          break;
+        }
+        case 'tts-cancel-audio': {
+          ttsStop();
+          await edgeCancel();
           send({ ok: true });
           break;
         }

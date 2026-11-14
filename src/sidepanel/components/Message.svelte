@@ -5,10 +5,11 @@
   import { rpc } from '../lib/port';
   import type { ChatMessage, VoiceMessage } from '../../shared/types';
 
-  let { msg, lang = 'en' }: { msg: ChatMessage; lang?: 'ar' | 'en' } = $props();
+  let { msg, lang = 'en', activeVoiceId = '' }: { msg: ChatMessage; lang?: 'ar' | 'en'; activeVoiceId?: string } = $props();
   let host = $state<HTMLElement>();
   let view: FlowView | undefined;
   const dir = $derived(textDir(msg.content));
+  const visibleVoices = $derived((msg.voices ?? []).filter((v) => v.id !== activeVoiceId));
   const planLabel = $derived(lang === 'ar' ? 'الخطة' : 'Plan');
   const L = $derived(lang === 'ar'
     ? { download: '⬇ تحميل', print: '🖨 طباعة / PDF', voice: 'رسالة صوتية' }
@@ -69,9 +70,9 @@
     {#if msg.content}
       <div class="flow-host" bind:this={host}></div>
     {/if}
-    {#if msg.voices?.length}
+    {#if visibleVoices.length}
       <div class="voice-list">
-        {#each msg.voices as v (v.id)}
+        {#each visibleVoices as v (v.id)}
           <button type="button" class="history-voice" onclick={() => replayVoice(v)} title={v.text}>
             <span class="hv-play">▶</span>
             <span class="hv-wave" aria-hidden="true">

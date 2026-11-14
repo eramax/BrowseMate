@@ -5,7 +5,7 @@ import { crx } from '@crxjs/vite-plugin';
 const manifest = {
   manifest_version: 3,
   name: 'BrowseMate',
-  version: '0.2.1',
+  version: '0.2.3',
   side_panel: { default_path: 'src/sidepanel/index.html' },
   background: { service_worker: 'src/background/index.ts', type: 'module' },
   content_scripts: [
@@ -35,4 +35,5 @@ export default defineConfig({
   plugins: [svelte(), crx({ manifest })],
   // service worker لا يملك window/document — لا تحقن Vite module-preload helper
   build: { modulePreload: false },
+  define: { __BUILD_TIME__: JSON.stringify(new Date().toISOString()) },
 });

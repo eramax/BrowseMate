@@ -28,6 +28,20 @@ import { createZip, readZip } from '../../shared/zip';
   let edgeVoices = $state<EdgeVoiceOption[]>([]);
   let readerMsg = $state('');
   let readerLoading = $state(false);
+  const appVersion = chrome.runtime.getManifest().version;
+  const buildAt = new Date(__BUILD_TIME__);
+  function formatBuild(): string {
+    try {
+      return new Intl.DateTimeFormat(lang === 'ar' ? 'ar' : 'en', { dateStyle: 'medium', timeStyle: 'short' }).format(buildAt);
+    } catch {
+      return buildAt.toISOString();
+    }
+  }
+  const buildLabel = $derived(
+    lang === 'ar'
+      ? `الإصدار ${appVersion} · تاريخ البناء ${formatBuild()}`
+      : `Version ${appVersion} · Build ${formatBuild()}`,
+  );
   const filtered = $derived(
     model ? models.filter((m) => m.toLowerCase().includes(model.toLowerCase())) : models,
   );
@@ -570,9 +584,9 @@ import { createZip, readZip } from '../../shared/zip';
       {#if skillsMsg}<div class="hint" style="color:var(--ok)">{skillsMsg}</div>{/if}
     </div>
 
-    <button class="btn" onclick={() => saveAll()}>{L.save}</button>
     {#if saved}<div class="hint ok">{L.saved}</div>{/if}
     {#if notice}<div class="hint" style="color:var(--warn)">{notice}</div>{/if}
     <div class="hint">{L.autosave}<br />{L.privacy}</div>
+    <div class="build-info" dir="auto">{buildLabel}</div>
   </div>
 </div>
