@@ -241,7 +241,7 @@
     {:else if tab === 'skills'}
       <SkillList {skills} {lang} run={runSkill} remove={deleteSkill} refresh={refreshSkills} />
     {:else}
-      <SettingsView {lang} setUiLang={setLangUi} />
+      <SettingsView {lang} setUiLang={setLangUi} {sessionId} />
     {/if}
   </div>
 </div>

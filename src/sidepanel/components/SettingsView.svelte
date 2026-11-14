@@ -5,7 +5,7 @@ import { fromSkillMd, toSkillMd } from '../../shared/skill-md';
 import { createZip, readZip } from '../../shared/zip';
   import type { Lang } from '../../shared/i18n';
 
-  let { lang, setUiLang }: { lang: Lang; setUiLang: (l: Lang) => void } = $props();
+  let { lang, setUiLang, sessionId }: { lang: Lang; setUiLang: (l: Lang) => void; sessionId: string } = $props();
 
   let baseUrl = $state('');
   let apiKey = $state('');
@@ -15,6 +15,9 @@ import { createZip, readZip } from '../../shared/zip';
   let saved = $state(false);
   let open = $state(false);
   let approvalMode = $state<'sensitive' | 'always' | 'never'>('sensitive');
+  let debug = $state(false);
+  let debugMsg = $state('');
+  let debugPreview = $state('');
   let skillsMsg = $state('');
   const filtered = $derived(
     model ? models.filter((m) => m.toLowerCase().includes(model.toLowerCase())) : models,
@@ -30,6 +33,20 @@ import { createZip, readZip } from '../../shared/zip';
     permAlways: 'اسأل عن كل إجراء',
     permNever: 'بدون سؤال — تحكم كامل تلقائي',
     permsHint: 'يشمل التنقل، الإغلاق، النقر، الملء، والحذف.',
+    debug: 'التشخيص',
+    debugToggle: 'تسجيل تشخيصي مفصل لكل جلسة',
+    debugHint: 'يسجل الرسائل، تعليمات النموذج، كل أجزاء البث، الأدوات (الوسائط/النتيجة/المدة/الأخطاء)، الموافقات، والاستخدام. يُخزّن آخر ~2MB لكل جلسة في chrome.storage.local. قد يحتوي بيانات حساسة.',
+    debugView: 'عرض سجل الجلسة',
+    debugDownload: 'تنزيل سجل الجلسة',
+    debugAll: 'تنزيل كل السجلات',
+    debugClear: 'مسح السجلات',
+    debugEmpty: 'لا يوجد سجل لهذه الجلسة بعد.',
+    debugCleared: 'تم مسح سجلات التشخيص.',
+    debugConfirm: 'مسح كل سجلات التشخيص؟',
+    debugEntries: 'مدخلات',
+    debugSessions: 'جلسات',
+    debugOn: 'تم تفعيل التسجيل التشخيصي.',
+    debugOff: 'تم إيقاف التسجيل التشخيصي.',
     skillsBackup: 'نسخ احتياطي للمهارات',
     exportAll: '⤓ تصدير كل المهارات',
     importAll: '⇪ استيراد ملف مهارات',
@@ -46,6 +63,20 @@ import { createZip, readZip } from '../../shared/zip';
     permAlways: 'Ask for every action',
     permNever: 'No prompts — full auto control',
     permsHint: 'Covers navigation, closing, clicking, filling and deletion.',
+    debug: 'Debug',
+    debugToggle: 'Detailed per-session debug logging',
+    debugHint: 'Logs messages, model instructions, every stream part, tools (args/result/duration/errors), approvals and usage. Keeps ~2MB per session in chrome.storage.local. May contain sensitive data.',
+    debugView: 'View session log',
+    debugDownload: 'Download session log',
+    debugAll: 'Download all logs',
+    debugClear: 'Clear logs',
+    debugEmpty: 'No log for this session yet.',
+    debugCleared: 'Debug logs cleared.',
+    debugConfirm: 'Clear all debug logs?',
+    debugEntries: 'entries',
+    debugSessions: 'sessions',
+    debugOn: 'Debug logging enabled.',
+    debugOff: 'Debug logging disabled.',
     skillsBackup: 'Skills backup',
     exportAll: '⤓ Export all skills',
     importAll: '⇪ Import skills file',
@@ -61,6 +92,7 @@ import { createZip, readZip } from '../../shared/zip';
     apiKey = res.settings.apiKey;
     model = res.settings.model;
     approvalMode = res.settings.approvalMode ?? 'sensitive';
+    debug = Boolean(res.settings.debug);
     if (baseUrl && apiKey) await fetchModels(true);
     await refreshSyncStatus();
   }
@@ -115,6 +147,52 @@ import { createZip, readZip } from '../../shared/zip';
     await rpc('save-settings', { patch: { approvalMode: m } });
     saved = true;
     setTimeout(() => (saved = false), 1600);
+  }
+
+  // ===== Debug =====
+  async function toggleDebug() {
+    debug = !debug;
+    await rpc('save-settings', { patch: { debug } });
+    debugMsg = debug ? L.debugOn : L.debugOff;
+  }
+
+  function saveJson(name: string, data: unknown) {
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = name;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+
+  async function viewDebug() {
+    const res: any = await rpc('get-debug-log', { sessionId });
+    if (!res.ok || !res.log) { debugPreview = ''; debugMsg = L.debugEmpty; return; }
+    const text = JSON.stringify(res.log, null, 2);
+    debugPreview = text.length > 400000 ? `${text.slice(0, 400000)}\n…` : text;
+    debugMsg = `${res.log.entries?.length ?? 0} ${L.debugEntries}`;
+  }
+
+  async function downloadDebug() {
+    const res: any = await rpc('get-debug-log', { sessionId });
+    if (!res.log) { debugMsg = L.debugEmpty; return; }
+    saveJson(`browsemate-debug-${sessionId || 'session'}.json`, res.log);
+    debugMsg = `${res.log.entries?.length ?? 0} ${L.debugEntries}`;
+  }
+
+  async function downloadAllDebug() {
+    const res: any = await rpc('get-debug-all');
+    if (!res.ok) return;
+    saveJson('browsemate-debug-all.json', res.logs);
+    debugMsg = `${res.logs?.length ?? 0} ${L.debugSessions}`;
+  }
+
+  async function clearDebug() {
+    if (!confirm(L.debugConfirm)) return;
+    await rpc('clear-debug');
+    debugPreview = '';
+    debugMsg = L.debugCleared;
   }
 
   // ===== نسخ احتياطي للمهارات (SKILL.md / ZIP فقط) =====
@@ -232,6 +310,23 @@ import { createZip, readZip } from '../../shared/zip';
         </button>
       </div>
       <div class="hint">{L.permsHint}</div>
+    </div>
+
+    <div class="field">
+      <label>{L.debug}</label>
+      <label style="display:flex; align-items:center; gap:8px">
+        <input type="checkbox" checked={debug} onchange={toggleDebug} />
+        <span>{L.debugToggle}</span>
+      </label>
+      <div class="hint">{L.debugHint}</div>
+      <div style="display:flex; gap:6px; flex-wrap:wrap; margin-top:6px">
+        <button class="mini" onclick={viewDebug}>{L.debugView}</button>
+        <button class="mini" onclick={downloadDebug}>{L.debugDownload}</button>
+        <button class="mini" onclick={downloadAllDebug}>{L.debugAll}</button>
+        <button class="mini danger" onclick={clearDebug}>{L.debugClear}</button>
+      </div>
+      {#if debugMsg}<div class="hint">{debugMsg}</div>{/if}
+      {#if debugPreview}<pre class="debug-pre">{debugPreview}</pre>{/if}
     </div>
 
     <div class="field">

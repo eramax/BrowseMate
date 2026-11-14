@@ -52,6 +52,11 @@ export type WorkerToPanel =
   | { type: 'session-data'; session: Session };
 
 // ===== أدوات بنمط MCP =====
+/** واجهة تسجيل تشخيصي — تُمرَّر للأدوات عند تفعيل Debug */
+export interface DebugSink {
+  log: (event: string, data?: unknown, level?: 'debug' | 'info' | 'warn' | 'error') => void;
+}
+
 export interface ToolContext {
   getActiveTab: () => Promise<chrome.tabs.Tab>;
   emit: (evt: WorkerToPanel) => void;
@@ -69,6 +74,8 @@ export interface ToolContext {
   callCount?: { value: number };
   /** آخر خطأ تحقق لكل ملف — لكشف التعديلات التي لا تُحدث تقدماً */
   lastPatchError?: Map<string, string>;
+  /** سجل تشخيصي اختياري */
+  debug?: DebugSink;
 }
 
 export type ApprovalMode = 'sensitive' | 'always' | 'never';

@@ -264,3 +264,19 @@ input, textarea, select { font: inherit; }
 .card[draggable="true"] { cursor: default; }
 .card.dragover { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); }
 .mini:disabled { opacity: .35; cursor: default; }
+
+.debug-pre {
+  max-height: 240px;
+  overflow: auto;
+  direction: ltr;
+  text-align: left;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px;
+  font: 11px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--muted);
+  white-space: pre-wrap;
+  word-break: break-word;
+  margin-top: 8px;
+}

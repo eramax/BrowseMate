@@ -6,6 +6,7 @@ import { createApprovalManager } from './approvals';
 import { runChat, type RunHandle } from './agent';
 import { seedSkills } from './seed';
 import { getArtifact } from './artifacts';
+import { debugStore, logSystemDebug } from './debug';
 import { chromeKV } from '../shared/storage';
 import { validateSkill, buildSkillFromToolCalls } from './skills';
 import {
@@ -30,6 +31,19 @@ const sessions = createSessionStore(chromeKV);
 const approvals = createApprovalManager();
 const runs = new Map<string, RunHandle>();
 
+self.addEventListener('error', (e) => {
+  void logSystemDebug('sw:error', {
+    message: e.message,
+    filename: e.filename,
+    lineno: e.lineno,
+    colno: e.colno,
+    error: (e as any).error,
+  });
+});
+self.addEventListener('unhandledrejection', (e) => {
+  void logSystemDebug('sw:unhandledrejection', { reason: (e as any).reason });
+});
+
 let port: chrome.runtime.Port | undefined;
 let activeSessionId = '';
 
@@ -37,7 +51,7 @@ chrome.runtime.onInstalled.addListener(() => {
   chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch(console.error);
 });
 initLang();
-pullSkills().then(() => seedSkills()).catch(() => {});
+pullSkills().then(() => seedSkills()).catch((e) => { console.warn('skills init:', e); void logSystemDebug('skills:init-error', { error: e }); });
 
 async function initLang() {
   // الافتراضي الجديد: الإنجليزية — يُطبَّق مرة واحدة على من لم يغيّر اللغة يدوياً
@@ -52,7 +66,7 @@ async function initLang() {
 
 chrome.runtime.onConnect.addListener((p) => {
   if (p.name !== 'panel') return;
-  pullSkills().then(() => seedSkills()).catch((e) => console.warn('skills init:', e));
+  pullSkills().then(() => seedSkills()).catch((e) => { console.warn('skills init:', e); void logSystemDebug('skills:init-error', { error: e }); });
   port = p;
   p.onDisconnect.addListener(() => { port = undefined; });
   p.onMessage.addListener((msg: PanelToWorker) => {
@@ -109,6 +123,7 @@ chrome.runtime.onMessage.addListener((msg: any, _s, send) => {
         }
         case 'delete-session': {
           await sessions.remove(msg.id);
+          await debugStore.clear(msg.id);
           if (activeSessionId === msg.id) activeSessionId = '';
           send({ ok: true });
           break;
@@ -202,6 +217,17 @@ chrome.runtime.onMessage.addListener((msg: any, _s, send) => {
         }
         case 'delete-skill': {
           await storeDeleteSkill(msg.name);
+          send({ ok: true });
+          break;
+        }
+        case 'get-debug-log': {
+          const log = await debugStore.read(msg.sessionId || activeSessionId);
+          send({ ok: true, log: log ?? null });
+          break;
+        }
+        case 'get-debug-all': send({ ok: true, logs: await debugStore.all() }); break;
+        case 'clear-debug': {
+          await debugStore.clearAll();
           send({ ok: true });
           break;
         }

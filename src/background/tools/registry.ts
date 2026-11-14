@@ -30,6 +30,8 @@ export function asAISDKTools(ctx: ToolContext, isPlanArmed: () => boolean): Reco
       description: t.description,
       inputSchema: t.schema,
       execute: async (args: any) => {
+        const startedAt = Date.now();
+        ctx.debug?.log('tool:start', { name: t.name, args });
         // حماية من الحلقات: نفس الأداة بنفس الوسائط مرتين = أوقف وأطلب تغيير النهج.
         // لا نطبقها على أدوات القراءة/المعاينة: تكرار ws_preview بعد تعديل ضروري
         // (وبدونه تبقى المعاينة على نسخة قديمة كما حدث فعلياً).
@@ -37,6 +39,7 @@ export function asAISDKTools(ctx: ToolContext, isPlanArmed: () => boolean): Reco
           const key = t.name + ':' + stableStringify(args);
           const seen = ctx.seenCalls?.get(key) ?? 0;
           if (seen >= 1) {
+            ctx.debug?.log('tool:blocked-repeat', { name: t.name, args, durationMs: Date.now() - startedAt }, 'warn');
             return {
               error: 'REPEATED_IDENTICAL_CALL',
               message: 'نفس الاستدعاء تكرر بنفس الوسائط — لا تعده. اقرأ الملف (ws_read أو site_read) ثم عدّل بـ edit، أو غيّر النهج/الوسائط.',
@@ -47,15 +50,28 @@ export function asAISDKTools(ctx: ToolContext, isPlanArmed: () => boolean): Reco
         if (ctx.callCount) {
           ctx.callCount.value++;
           if (ctx.callCount.value > 40) {
+            ctx.debug?.log('tool:budget-exceeded', { name: t.name, args, count: ctx.callCount.value }, 'warn');
             return { error: 'TOOL_BUDGET_EXCEEDED', message: 'تجاوزت 40 استدعاء أداة في تشغيل واحد. توقف واكتب ملخصاً أو اطلب توجيهاً.' };
           }
         }
         const ask = ctx.approvalMode === 'always' || (ctx.approvalMode === 'sensitive' && t.sensitive);
         if (ask && !isPlanArmed()) {
+          ctx.debug?.log('approval:request', { tool: t.name, args });
           const ok = await ctx.requestApproval(t.name, args);
-          if (!ok) return { error: 'REFUSED_BY_USER', message: 'المستخدم رفض هذا الإجراء الحساس — أعد التخطيط أو اسأل.' };
+          ctx.debug?.log('approval:result', { tool: t.name, approved: ok, durationMs: Date.now() - startedAt }, ok ? 'info' : 'warn');
+          if (!ok) {
+            ctx.debug?.log('tool:refused', { name: t.name, args, durationMs: Date.now() - startedAt }, 'warn');
+            return { error: 'REFUSED_BY_USER', message: 'المستخدم رفض هذا الإجراء الحساس — أعد التخطيط أو اسأل.' };
+          }
         }
-        return t.execute(args, ctx);
+        try {
+          const out = await t.execute(args, ctx);
+          ctx.debug?.log('tool:end', { name: t.name, durationMs: Date.now() - startedAt, result: out });
+          return out;
+        } catch (e) {
+          ctx.debug?.log('tool:error', { name: t.name, durationMs: Date.now() - startedAt, error: e }, 'error');
+          throw e;
+        }
       },
     };
   }

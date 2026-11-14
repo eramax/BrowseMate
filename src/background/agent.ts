@@ -2,8 +2,9 @@
 import { streamText, generateText, isStepCount } from 'ai';
 import { makeModel } from './llm';
 import { loadSettings } from './settings';
-import { asAISDKTools } from './tools/registry';
+import { allTools, asAISDKTools } from './tools/registry';
 import { isGroupableUrl, isTabGroupingRequest } from './intent';
+import { createDebugLogger, type DebugLogger } from './debug';
 import type { ChatMessage, ToolCallInfo, ToolContext, WorkerToPanel } from '../shared/types';
 import type { SessionStore } from './sessions';
 
@@ -51,6 +52,7 @@ export async function runChat(
   skill?: { name: string; params: Record<string, string> },
 ) {
   const runId = crypto.randomUUID();
+  let debugRef: DebugLogger | undefined;
   const ac = new AbortController();
   deps.runs.set(runId, { ac, sessionId });
   const keepAlive = setInterval(() => chrome.runtime.getPlatformInfo?.().catch(() => {}), 10000);
@@ -117,18 +119,51 @@ export async function runChat(
     const skillContext = skill
       ? `\n\nالمستخدم يشغّل المهارة "${skill.name}" مباشرة بمعاملات ${JSON.stringify(skill.params)}. استدعِ run_skill الآن بهذا الاسم الدقيق وهذه المعاملات؛ لا تستدعِ list_skills.`
       : '';
+    const instructions =
+      SYSTEM +
+      `\n\nسياق التبويب النشط الآن: title="${tab?.title ?? ''}" url="${tab?.url ?? ''}"` +
+      groupingContext +
+      skillContext;
 
     // مسودة رد فارغة تُضاف فوراً ثم تُحدَّث — tool calls لا تختفي عند أي انقطاع
     draftId = crypto.randomUUID();
     await deps.sessions.append(sessionId, { id: draftId, role: 'assistant', content: '', ts: Date.now() });
 
     const model = await makeModel();
-    const { approvalMode } = await loadSettings();
+    const settings = await loadSettings();
+    const { approvalMode } = settings;
+    const dbg = createDebugLogger(sessionId, Boolean(settings.debug));
+    debugRef = dbg;
+    dbg.log('run:start', {
+      runId,
+      sessionId,
+      userText,
+      model: settings.model,
+      baseUrl: settings.baseUrl,
+      approvalMode,
+      debug: settings.debug,
+      tab: { title: tab?.title, url: tab?.url },
+      grouping: groupIntent ? groupingTabs : undefined,
+      skill: skill ?? undefined,
+      instructions,
+    });
+    dbg.log('run:history', { messages: history });
+    dbg.log('run:messages', { messages: toModelMessages(history) });
+    dbg.log('run:tools', {
+      tools: allTools().map((t) => ({
+        name: t.name,
+        description: t.description,
+        sensitive: t.sensitive,
+        idempotent: Boolean(t.idempotent),
+        schema: t.jsonSchema,
+      })),
+    });
 
     const ctx: ToolContext = {
       seenCalls: new Map<string, number>(),
       callCount: { value: 0 },
       lastPatchError: new Map<string, string>(),
+      debug: dbg,
       getActiveTab: deps.getActiveTab,
       emit: (e) => deps.emit(sessionId, e),
       signal: ac.signal,
@@ -139,18 +174,21 @@ export async function runChat(
         const last = [...(s?.messages ?? [])].reverse().find((m) => m.role === 'assistant' && m.toolCalls?.length);
         return last?.toolCalls ?? [];
       },
-      requestApproval: (tool, args, steps) =>
-        deps.approvals.request(tool, args, steps, (info) =>
-          deps.emit(sessionId, { type: 'approval-request', id: info.id, tool: info.tool, args: info.args, steps: info.steps })),
+      requestApproval: (tool, args, steps) => {
+        dbg.log('approval:request', { tool, args, steps });
+        return deps.approvals
+          .request(tool, args, steps, (info) =>
+            deps.emit(sessionId, { type: 'approval-request', id: info.id, tool: info.tool, args: info.args, steps: info.steps }))
+          .then((ok) => {
+            dbg.log('approval:result', { tool, approved: ok }, ok ? 'info' : 'warn');
+            return ok;
+          });
+      },
     };
 
     const result = streamText({
       model,
-      instructions:
-        SYSTEM +
-        `\n\nسياق التبويب النشط الآن: title="${tab?.title ?? ''}" url="${tab?.url ?? ''}"` +
-        groupingContext +
-        skillContext,
+      instructions,
       abortSignal: ac.signal,
       stopWhen: isStepCount(MAX_STEPS),
       messages: toModelMessages(history),
@@ -168,18 +206,29 @@ export async function runChat(
           : undefined,
     });
 
+    let textChunk = '';
+    let lastTextLog = Date.now();
     for await (const part of result.stream) {
       const type = (part as any).type;
       if (type === 'text-delta') {
-        full += (part as any).text ?? '';
+        const delta = (part as any).text ?? '';
+        full += delta;
+        textChunk += delta;
+        if (textChunk.length >= 1500 || Date.now() - lastTextLog > 1500) {
+          dbg.log('stream:text', { text: textChunk });
+          textChunk = '';
+          lastTextLog = Date.now();
+        }
         // كشف ::plan…::endplan → خطة معلنة + موافقة مجمعة واحدة
         if (!plan && full.includes('::endplan')) {
           const m = full.match(/::plan\s*\n([\s\S]*?)::endplan/);
           if (m) {
             plan = m[1].split('\n').map((s) => s.trim().replace(/^[-*\d.\s]+/, '')).filter(Boolean);
+            dbg.log('plan:detected', { steps: plan });
             deps.emit(sessionId, { type: 'plan', runId, steps: plan });
             planArmed = approvalMode === 'never' || await deps.approvals.request('plan', { steps: plan }, plan, (info) =>
               deps.emit(sessionId, { type: 'approval-request', id: info.id, tool: 'plan', args: { steps: plan }, steps: plan }));
+            dbg.log('plan:approval', { approved: planArmed }, planArmed ? 'info' : 'warn');
             full = planArmed
               ? full.replace(/::plan[\s\S]*?::endplan/, '').trim()
               : full.replace(/::plan[\s\S]*?::endplan/, '> ⛔ لم توافق على الخطة.');
@@ -190,11 +239,13 @@ export async function runChat(
         deps.emit(sessionId, { type: 'delta', runId, text: shown });
         persist();
       } else if (type === 'tool-call') {
+        dbg.log('stream:tool-call', { name: (part as any).toolName, input: (part as any).input }, 'debug');
         toolLog.push({ name: (part as any).toolName, args: (part as any).input, status: 'running' });
         deps.emit(sessionId, { type: 'tool-start', runId, info: { name: (part as any).toolName, args: (part as any).input, status: 'running' } });
         persist(true);
       } else if (type === 'tool-result') {
         const out: any = (part as any).output;
+        dbg.log('stream:tool-result', { name: (part as any).toolName, output: out }, 'debug');
         if (out?.artifact?.id) {
           // إبقاء زر تحميل واحد لكل اسم ملف (آخر إصدار يفوز)
           const i = artifacts.findIndex((a) => a.filename === out.artifact.filename);
@@ -214,9 +265,13 @@ export async function runChat(
         });
         persist(true);
       } else if (type === 'error') {
+        dbg.log('stream:error', { error: (part as any).error }, 'error');
         throw (part as any).error;
+      } else {
+        dbg.log('stream:part', { type, part }, 'debug');
       }
     }
+    if (textChunk) dbg.log('stream:text', { text: textChunk });
 
     // لا تسمح بادعاء التجميع بدون استدعاء ناجح لـ group_tabs.
     const grouped = toolLog.some((t) => t.name === 'group_tabs' && t.status === 'ok');
@@ -226,9 +281,13 @@ export async function runChat(
         '> ⚠️ لم أستدعِ group_tabs، لذلك لم تتغير أي مجموعة. أعد المحاولة.';
     }
 
+    dbg.log('run:post-stream', { full, toolLog, grouped });
+
     // ===== رد احتياطي: النموذج أنهى التشغيل بلا نص (استنفاد خطوات/موديل يعيد reasoning فقط) =====
     if (!full.trim()) {
+      dbg.log('fallback:start', { toolLog });
       full = await fallbackAnswer(model, history, toolLog, sessionId, deps).catch(() => '');
+      dbg.log('fallback:end', { full });
     }
     // ضمان عدم وجود رد فارغ أبداً — خصوصاً بعد إنشاء ملفات
     if (!full.trim()) {
@@ -243,21 +302,32 @@ export async function runChat(
       content: full, toolCalls: toolLog.map(({ result, ...t }) => t), plan,
       artifacts: artifacts.length ? artifacts : undefined,
     });
+    let finishReason: unknown;
+    let usage: unknown;
+    try { finishReason = await (result as any).finishReason; } catch {}
+    try { usage = await (result as any).usage; } catch {}
+    dbg.log('run:end', { runId, finishReason, usage, full, toolLog, artifacts, plan });
+    await dbg.flush();
     deps.emit(sessionId, { type: 'done', runId });
   } catch (e: any) {
     if (deps.runs.get(runId)?.ac.signal.aborted) {
       const note = full.trim() ? `${full}\n\n> ⏹️ أُوقف بواسطة المستخدم` : '> ⏹️ أُوقف بواسطة المستخدم';
       await deps.sessions.patchMessage(sessionId, draftId, { content: note, toolCalls: toolLog.map(({ result, ...t }) => t), plan }).catch(() => {});
+      debugRef?.log('run:aborted', { runId, full, toolLog }, 'warn');
+      await debugRef?.flush();
       deps.emit(sessionId, { type: 'done', runId });
       return;
     }
     const { message, code } = friendlyError(e);
     const note = (full.trim() ? full + '\n\n' : '') + `> ⚠️ ${message}`;
     await deps.sessions.patchMessage(sessionId, draftId, { content: note, toolCalls: toolLog.map(({ result, ...t }) => t), plan }).catch(() => {});
+    debugRef?.log('run:error', { runId, message, code, error: e, full, toolLog }, 'error');
+    await debugRef?.flush();
     deps.emit(sessionId, { type: 'error', runId, message, code });
   } finally {
     clearTimeout(persistTimer);
     clearInterval(keepAlive);
+    await debugRef?.flush().catch(() => {});
     deps.runs.delete(runId);
   }
 }
