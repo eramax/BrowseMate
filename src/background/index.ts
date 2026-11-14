@@ -8,6 +8,8 @@ import { seedSkills } from './seed';
 import { getArtifact } from './artifacts';
 import { debugStore, logSystemDebug } from './debug';
 import { chromeKV } from '../shared/storage';
+import { getTtsVoices, ttsPause, ttsResume, ttsSpeak, ttsStop } from './tts';
+import { edgePause, edgeResume, edgeSpeak, edgeStop, fetchEdgeVoices } from './edge';
 import { validateSkill, buildSkillFromToolCalls } from './skills';
 import {
   getSkills, getOrderedSkills, saveSkill as storeSkill, deleteSkill as storeDeleteSkill,
@@ -25,6 +27,7 @@ import './tools/cv';
 import './tools/doc';
 import './tools/web';
 import './tools/workspace';
+import './tools/reader';
 import './tools/skillTools';
 
 const sessions = createSessionStore(chromeKV);
@@ -90,7 +93,16 @@ function emit(sessionId: string, evt: WorkerToPanel) {
 }
 
 // ===== RPC بسيط للطلبات غير المتدفقة (إعدادات/جلسات/مهارات) =====
-chrome.runtime.onMessage.addListener((msg: any, _s, send) => {
+chrome.runtime.onMessage.addListener((msg: any, sender, send) => {
+  // رسائل الـ offscreen لها target خاص — لا يعالجها الـ SW
+  if (msg?.target === 'offscreen') return;
+  if (msg?.target === 'sw') {
+    if (msg.type === 'edge-event' && msg.tabId != null && msg.event) {
+      chrome.tabs.sendMessage(msg.tabId, msg.event).catch(() => {});
+    }
+    send({ ok: true });
+    return true;
+  }
   (async () => {
     try {
       switch (msg?.type) {
@@ -106,6 +118,58 @@ chrome.runtime.onMessage.addListener((msg: any, _s, send) => {
           break;
         }
         case 'get-settings': send({ ok: true, settings: await loadSettings() }); break;
+        case 'tts-speak': {
+          const tabId = sender.tab?.id ?? null;
+          const requested = msg.engine === 'browser' ? 'browser' : 'edge';
+          if (requested === 'edge') {
+            ttsStop();
+            const r = await edgeSpeak(msg.text, msg.voice, msg.rate, tabId);
+            if (r.ok) {
+              send({ ok: true, engine: 'edge' });
+              break;
+            }
+            // المستخدم أوقف القراءة أثناء التركيب — لا تبدأ صوتاً بديلاً
+            if (r.error === 'EDGE_STOPPED') {
+              send({ ok: false, error: 'EDGE_STOPPED' });
+              break;
+            }
+            // احتياط: صوت المتصفح الافتراضي
+            const b = ttsSpeak(msg.text, msg.rate, undefined, tabId);
+            send({ ...b, engine: 'browser', fallback: true, edgeError: r.error });
+            break;
+          }
+          edgeStop();
+          const r = ttsSpeak(msg.text, msg.rate, msg.voice, tabId);
+          send({ ...r, engine: 'browser' });
+          break;
+        }
+        case 'tts-pause':
+          ttsPause();
+          edgePause();
+          send({ ok: true });
+          break;
+        case 'tts-resume':
+          ttsResume();
+          edgeResume();
+          send({ ok: true });
+          break;
+        case 'tts-stop':
+          ttsStop();
+          edgeStop();
+          send({ ok: true });
+          break;
+        case 'tts-voices': {
+          if (msg.engine === 'browser') {
+            send({ ok: true, engine: 'browser', voices: await getTtsVoices() });
+            break;
+          }
+          try {
+            send({ ok: true, engine: 'edge', voices: await fetchEdgeVoices() });
+          } catch (e: any) {
+            send({ ok: false, error: 'EDGE_VOICES_FAILED', message: e?.message ?? String(e) });
+          }
+          break;
+        }
         case 'ensure-session': {
           const first = (await sessions.list())[0];
           if (first) { send({ ok: true, id: first.id }); break; }

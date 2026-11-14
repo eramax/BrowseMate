@@ -9,9 +9,9 @@ const manifest = {
   side_panel: { default_path: 'src/sidepanel/index.html' },
   background: { service_worker: 'src/background/index.ts', type: 'module' },
   content_scripts: [
-    { matches: ['<all_urls>'], js: ['src/content/page-tools.js'], run_at: 'document_idle' },
+    { matches: ['<all_urls>'], js: ['src/content/page-tools.js', 'src/content/reader/index.ts'], run_at: 'document_idle' },
   ],
-  permissions: ['sidePanel', 'tabs', 'tabGroups', 'storage', 'scripting', 'debugger', 'downloads', 'activeTab'],
+  permissions: ['sidePanel', 'tabs', 'tabGroups', 'storage', 'scripting', 'debugger', 'downloads', 'activeTab', 'tts', 'offscreen'],
   host_permissions: ['<all_urls>'],
   action: {
     default_title: 'BrowseMate',
