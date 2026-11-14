@@ -116,7 +116,7 @@
     if (res.ok && res.session) {
       // إخفاء مسودات فارغة قديمة (بقايا انقطاع) — لا فقاعات فارغة في الشات
       messages = (res.session.messages as ChatMessage[]).filter(
-        (m) => m.role !== 'assistant' || m.content.trim() || m.toolCalls?.length,
+        (m) => m.role !== 'assistant' || m.content.trim() || m.toolCalls?.length || m.voices?.length,
       );
     }
   }

@@ -102,9 +102,10 @@ function startReading(
   voice: string;
   rate: number;
   engine: 'edge' | 'browser';
+  text: string;
 } {
   const usable = items.filter((b) => Boolean(b.text?.trim()));
-  if (!usable.length) return { count: 0, total: 0, first: '', voice: '', rate: 1, engine: 'edge' };
+  if (!usable.length) return { count: 0, total: 0, first: '', voice: '', rate: 1, engine: 'edge', text: '' };
 
   player.stop();
   highlighter.clearAll();
@@ -159,6 +160,7 @@ function startReading(
     voice: player.getSettings().voice,
     rate: player.getSettings().rate,
     engine: player.getSettings().engine,
+    text: usable.map((b) => b.text).join('\n\n').slice(0, 12000),
   };
 }
 

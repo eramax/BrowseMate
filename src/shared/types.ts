@@ -1,6 +1,15 @@
 // أنواع مشتركة بين SW والـ panel — بروتوكول Port + جلسات + أدوات + مهارات
 export type Role = 'user' | 'assistant' | 'system';
 
+export interface VoiceMessage {
+  id: string;
+  text: string;
+  voice: string;
+  rate: number;
+  engine: 'edge' | 'browser';
+  createdAt: number;
+}
+
 export interface ChatMessage {
   id: string;
   role: Role;
@@ -9,6 +18,8 @@ export interface ChatMessage {
   toolCalls?: ToolCallInfo[];
   plan?: string[]; // خطة معلنة (تُعرض كبطاقة، وتُنزع ::plan من النص)
   artifacts?: Array<{ id: string; filename: string; mime: string; sizeKb: number }>;
+  /** رسائل صوتية أُنشئت في هذا الرد — تبقى في السجل */
+  voices?: VoiceMessage[];
 }
 
 export interface ToolCallInfo {

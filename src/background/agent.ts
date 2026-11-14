@@ -5,7 +5,7 @@ import { loadSettings } from './settings';
 import { allTools, asAISDKTools } from './tools/registry';
 import { isGroupableUrl, isTabGroupingRequest } from './intent';
 import { createDebugLogger, type DebugLogger } from './debug';
-import type { ChatMessage, ToolCallInfo, ToolContext, WorkerToPanel } from '../shared/types';
+import type { ChatMessage, ToolCallInfo, ToolContext, WorkerToPanel, VoiceMessage } from '../shared/types';
 import type { SessionStore } from './sessions';
 
 export interface RunHandle { ac: AbortController; sessionId: string }
@@ -66,6 +66,7 @@ export async function runChat(
   let planArmed = false;
   const toolLog: ToolLogEntry[] = [];
   const artifacts: ChatMessage['artifacts'] = [];
+  const voices: VoiceMessage[] = [];
   let draftId = '';
 
   // حفظ حي: مسودة الرد + tool calls تُكتب أثناء التشغيل (تصمد لو قُتل SW)
@@ -77,6 +78,7 @@ export async function runChat(
       lastPersist = Date.now();
       deps.sessions.patchMessage(sessionId, draftId, {
         content: full, toolCalls: toolLog.map(({ result, ...t }) => t), plan,
+        ...(voices.length ? { voices: [...voices] } : {}),
       }).catch(() => {});
     };
     if (force || Date.now() - lastPersist > 700) doIt();
@@ -250,6 +252,8 @@ export async function runChat(
       } else if (type === 'tool-result') {
         const out: any = (part as any).output;
         dbg.log('stream:tool-result', { name: (part as any).toolName, output: out }, 'debug');
+        const voice = extractVoiceMessage((part as any).toolName, out);
+        if (voice) voices.push(voice);
         if (out?.artifact?.id) {
           // إبقاء زر تحميل واحد لكل اسم ملف (آخر إصدار يفوز)
           const i = artifacts.findIndex((a) => a.filename === out.artifact.filename);
@@ -305,6 +309,7 @@ export async function runChat(
     await deps.sessions.patchMessage(sessionId, draftId, {
       content: full, toolCalls: toolLog.map(({ result, ...t }) => t), plan,
       artifacts: artifacts.length ? artifacts : undefined,
+      ...(voices.length ? { voices } : {}),
     });
     let finishReason: unknown;
     let usage: unknown;
@@ -316,7 +321,7 @@ export async function runChat(
   } catch (e: any) {
     if (deps.runs.get(runId)?.ac.signal.aborted) {
       const note = full.trim() ? `${full}\n\n> ⏹️ أُوقف بواسطة المستخدم` : '> ⏹️ أُوقف بواسطة المستخدم';
-      await deps.sessions.patchMessage(sessionId, draftId, { content: note, toolCalls: toolLog.map(({ result, ...t }) => t), plan }).catch(() => {});
+      await deps.sessions.patchMessage(sessionId, draftId, { content: note, toolCalls: toolLog.map(({ result, ...t }) => t), plan, ...(voices.length ? { voices } : {}) }).catch(() => {});
       debugRef?.log('run:aborted', { runId, full, toolLog }, 'warn');
       await debugRef?.flush();
       deps.emit(sessionId, { type: 'done', runId });
@@ -324,7 +329,7 @@ export async function runChat(
     }
     const { message, code } = friendlyError(e);
     const note = (full.trim() ? full + '\n\n' : '') + `> ⚠️ ${message}`;
-    await deps.sessions.patchMessage(sessionId, draftId, { content: note, toolCalls: toolLog.map(({ result, ...t }) => t), plan }).catch(() => {});
+    await deps.sessions.patchMessage(sessionId, draftId, { content: note, toolCalls: toolLog.map(({ result, ...t }) => t), plan, ...(voices.length ? { voices } : {}) }).catch(() => {});
     debugRef?.log('run:error', { runId, message, code, error: e, full, toolLog }, 'error');
     await debugRef?.flush();
     deps.emit(sessionId, { type: 'error', runId, message, code });
@@ -357,6 +362,19 @@ async function fallbackAnswer(
     ],
   });
   return res.text ?? '';
+}
+
+/** يستخرج رسالة صوتية قابلة للحفظ من نتيجة أداة read_aloud */
+export function extractVoiceMessage(toolName: string, out: any): VoiceMessage | null {
+  if (toolName !== 'read_aloud' || !out?.ok || !out?.data?.voice || !out?.data?.text) return null;
+  return {
+    id: crypto.randomUUID(),
+    text: String(out.data.text),
+    voice: String(out.data.voice),
+    rate: Number(out.data.rate) || 1,
+    engine: out.data.engine === 'browser' ? 'browser' : 'edge',
+    createdAt: Date.now(),
+  };
 }
 
 function safeStringify(v: unknown): string {

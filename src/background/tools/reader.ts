@@ -132,6 +132,7 @@ register({
             voice: a.voice || '',
             rate: a.rate ?? 1,
             first: text.slice(0, 120),
+            text: text.slice(0, 12000),
           },
         };
       }
