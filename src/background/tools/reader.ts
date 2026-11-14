@@ -5,6 +5,7 @@ import { withReader } from '../inject';
 import { resolveTabId } from './tab-id';
 import { getTtsVoices } from '../tts';
 import { fetchEdgeVoices, type EdgeVoice } from '../edge';
+import { speakTextDirect } from '../tts-session';
 
 register({
   name: 'page_outline',
@@ -115,13 +116,7 @@ register({
       a.selection !== true;
     if (isTextOnly) {
       const text = String(a.text || '');
-      const res: any = await chrome.runtime.sendMessage({
-        type: 'tts-speak-text',
-        text,
-        voice: a.voice,
-        rate: a.rate,
-        engine,
-      });
+      const res: any = await speakTextDirect(text, a.voice, a.rate, engine);
       if (res?.ok) {
         return {
           ok: true,
