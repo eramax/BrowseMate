@@ -129,7 +129,7 @@ register({
             count: 1,
             total: 1,
             engine: res.engine || engine,
-            voice: a.voice || '',
+            voice: res.voice ?? a.voice ?? '',
             rate: a.rate ?? 1,
             first: text.slice(0, 120),
             text: text.slice(0, 12000),

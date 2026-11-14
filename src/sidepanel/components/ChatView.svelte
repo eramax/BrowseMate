@@ -9,7 +9,7 @@
     messages, liveText, livePlan, toolCalls, busy, approvals, progress, lang,
     sessions, currentId, settingsError, stalled,
     send, stop, approve, retry, openSettings,
-    openSession, createSession, removeSession,
+    openSession, createSession, removeSession, queuedText,
     ttsState, ttsPlay, ttsPause, ttsStop, ttsSeek, ttsReplay, ttsPrev, ttsNext,
   }: {
     messages: ChatMessage[];
@@ -32,6 +32,7 @@
     openSession: (id: string) => void;
     createSession: () => void;
     removeSession: (id: string) => void;
+    queuedText: string;
     ttsState: TtsPanelState | null;
     ttsPlay: () => void;
     ttsPause: () => void;
@@ -54,6 +55,7 @@
     working: 'يعمل', running: 'ينفذ', settings: 'أكمل إعدادات النموذج للمتابعة',
     openSettings: 'فتح الإعدادات', noSessions: 'لا جلسات', newSession: 'جلسة جديدة',
     stalled: 'توقف التنفيذ قبل الاكتمال (انقطاع الخدمة) — يمكنك إعادة المحاولة',
+    queued: 'سيُرسل بعد انتهاء الرد الحالي',
   } : {
     placeholder: 'Ask anything… e.g. summarize this page',
     stop: 'Stop', retry: 'Retry', plan: 'Declared plan',
@@ -62,6 +64,7 @@
     working: 'Working', running: 'Running', settings: 'Complete model settings to continue',
     openSettings: 'Open settings', noSessions: 'No sessions', newSession: 'New session',
     stalled: 'The run stopped before finishing (connection lost) — you can retry',
+    queued: 'Will send after the current reply finishes',
   });
 
   const currentTitle = $derived(sessions.find((s) => s.id === currentId)?.title ?? L.newSession);
@@ -80,7 +83,7 @@
 
   function submit() {
     const t = text.trim();
-    if (!t || busy) return;
+    if (!t) return;
     text = '';
     send(t);
   }
@@ -212,12 +215,18 @@
     </div>
   {/if}
 
+  {#if queuedText}
+    <div class="queued" dir={lang === 'ar' ? 'rtl' : 'ltr'}>
+      <span class="q-label">⏳ {L.queued}</span>
+      <span class="q-text">{queuedText}</span>
+    </div>
+  {/if}
+
   <div class="composer" dir={lang === 'ar' ? 'rtl' : 'ltr'}>
-    <textarea bind:value={text} onkeydown={onKey} placeholder={L.placeholder} disabled={busy} rows="1"></textarea>
+    <textarea bind:value={text} onkeydown={onKey} placeholder={L.placeholder} rows="1"></textarea>
+    <button class="btn" onclick={submit} disabled={!text.trim()}>{lang === 'ar' ? 'إرسال' : 'Send'}</button>
     {#if busy}
       <button class="btn ghost" onclick={stop}>{L.stop}</button>
-    {:else}
-      <button class="btn" onclick={submit} disabled={!text.trim()}>{lang === 'ar' ? 'إرسال' : 'Send'}</button>
     {/if}
   </div>
 

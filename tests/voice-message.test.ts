@@ -24,6 +24,14 @@ describe('extractVoiceMessage', () => {
     expect(v?.createdAt).toBeGreaterThan(0);
   });
 
+  it('keeps a browser-default voice with an empty voice name', () => {
+    const v = extractVoiceMessage('read_aloud', {
+      ok: true,
+      data: { text: 'Hello', voice: '', rate: 1, engine: 'browser' },
+    });
+    expect(v).toMatchObject({ text: 'Hello', voice: '', engine: 'browser' });
+  });
+
   it('ignores other tools, errors and empty text', () => {
     expect(extractVoiceMessage('read_page', { ok: true, data: { text: 'x', voice: 'v' } })).toBeNull();
     expect(extractVoiceMessage('read_aloud', { ok: false, data: { text: 'x', voice: 'v' } })).toBeNull();

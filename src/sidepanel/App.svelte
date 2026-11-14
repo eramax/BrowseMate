@@ -27,6 +27,8 @@
   let lastUserText = $state('');
   let lastSkill = $state<{ name: string; params: Record<string, string> } | undefined>();
   let ttsState = $state<TtsPanelState | null>(null);
+  let queuedSends = $state<Array<{ text: string; skill?: { name: string; params: Record<string, string> } }>>([]);
+  let queuedText = $state('');
   let ackTimer: ReturnType<typeof setTimeout> | undefined;
   let watchdog: ReturnType<typeof setInterval> | undefined;
 
@@ -91,7 +93,7 @@
           if (e.code === 'SETTINGS_MISSING') settingsError = true;
           else console.warn('BrowseMate:', e.message);
         }
-        loadSession(sessionId);
+        void loadSession(sessionId).finally(() => setTimeout(flushQueue, 30));
         break;
       }
     }
@@ -132,6 +134,12 @@
 
   // ===== أوامر الشات =====
   function send(text: string, skill?: { name: string; params: Record<string, string> }) {
+    if (busy) {
+      if (!text.trim()) return;
+      queuedSends = [...queuedSends, { text, ...(skill ? { skill } : {}) }];
+      queuedText = text;
+      return;
+    }
     lastUserText = text;
     lastSkill = skill;
     settingsError = false; stalled = false;
@@ -149,6 +157,14 @@
     }, 12000);
     startWatchdog();
   }
+  function flushQueue(): void {
+    if (busy || !queuedSends.length) return;
+    const [next, ...rest] = queuedSends;
+    queuedSends = rest;
+    queuedText = rest[0]?.text ?? '';
+    send(next.text, next.skill);
+  }
+
   function stop() { port.send({ type: 'stop' }); }
   function approve(id: string, ok: boolean) {
     approvals = approvals.filter((a) => a.id !== id);
@@ -243,6 +259,7 @@
         sessions={sessionsList} currentId={sessionId} {settingsError} {stalled}
         send={send} stop={stop} approve={approve} retry={retry} openSettings={() => (tab = 'settings')}
         openSession={openSession} createSession={newSession} removeSession={deleteSession}
+        {queuedText}
         {ttsState}
         ttsPlay={() => rpc('tts-resume')}
         ttsPause={() => rpc('tts-pause')}

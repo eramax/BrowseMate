@@ -147,6 +147,9 @@ async function speakTextDirect(
   engine: 'edge' | 'browser' | undefined,
 ): Promise<any> {
   const eng: 'edge' | 'browser' = engine === 'browser' ? 'browser' : 'edge';
+  const chosenVoice = String(voice || '') || (eng === 'edge'
+    ? (/[\u0600-\u06FF]/.test(text) ? 'ar-EG-ShakirNeural' : 'en-US-EmmaMultilingualNeural')
+    : '');
   ttsState = {
     active: true,
     playing: true,
@@ -158,28 +161,28 @@ async function speakTextDirect(
     currentTime: 0,
     duration: 0,
     tabId: null,
-    voice: String(voice || ''),
+    voice: chosenVoice,
     rate: Number(rate) || 1,
   };
   emitTtsState();
   if (eng === 'edge') {
     ttsStop();
-    const r = await edgeSpeak(text, voice, rate, null);
-    if (r.ok) return { ok: true, engine: 'edge' };
+    const r = await edgeSpeak(text, chosenVoice, rate, null);
+    if (r.ok) return { ok: true, engine: 'edge', voice: chosenVoice };
     if (r.error === 'EDGE_STOPPED') {
       resetTtsState();
       return { ok: false, error: 'EDGE_STOPPED' };
     }
     const b = ttsSpeak(text, rate, undefined, null);
     if (!b.ok) resetTtsState();
-    else setTtsState({ engine: 'browser' });
-    return { ...b, engine: 'browser', fallback: true, edgeError: r.error };
+    else setTtsState({ engine: 'browser', voice: '' });
+    return { ...b, engine: 'browser', voice: '', fallback: true, edgeError: r.error };
   }
   edgeStop();
   const b = ttsSpeak(text, rate, voice, null);
   if (!b.ok) resetTtsState();
-  else setTtsState({ engine: 'browser' });
-  return { ...b, engine: 'browser' };
+  else setTtsState({ engine: 'browser', voice: chosenVoice });
+  return { ...b, engine: 'browser', voice: chosenVoice };
 }
 
 // ===== RPC بسيط للطلبات غير المتدفقة (إعدادات/جلسات/مهارات) =====

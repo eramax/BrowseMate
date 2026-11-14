@@ -285,3 +285,19 @@ input, textarea, select { font: inherit; }
   word-break: break-word;
   margin-top: 8px;
 }
+
+.queued {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 12px 6px;
+  padding: 6px 10px;
+  border: 1px dashed var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  font-size: 10.5px;
+  color: var(--muted);
+  min-width: 0;
+}
+.queued .q-label { flex: none; color: var(--accent); }
+.queued .q-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

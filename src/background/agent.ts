@@ -148,6 +148,7 @@ export async function runChat(
       baseUrl: settings.baseUrl,
       approvalMode,
       debug: settings.debug,
+      version: chrome.runtime.getManifest().version,
       tab: { title: tab?.title, url: tab?.url },
       grouping: groupIntent ? groupingTabs : undefined,
       skill: skill ?? undefined,
@@ -366,11 +367,11 @@ async function fallbackAnswer(
 
 /** يستخرج رسالة صوتية قابلة للحفظ من نتيجة أداة read_aloud */
 export function extractVoiceMessage(toolName: string, out: any): VoiceMessage | null {
-  if (toolName !== 'read_aloud' || !out?.ok || !out?.data?.voice || !out?.data?.text) return null;
+  if (toolName !== 'read_aloud' || !out?.ok || !out?.data?.text) return null;
   return {
     id: crypto.randomUUID(),
     text: String(out.data.text),
-    voice: String(out.data.voice),
+    voice: String(out.data.voice || ''),
     rate: Number(out.data.rate) || 1,
     engine: out.data.engine === 'browser' ? 'browser' : 'edge',
     createdAt: Date.now(),
