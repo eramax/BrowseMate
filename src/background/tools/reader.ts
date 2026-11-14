@@ -40,7 +40,7 @@ register({
     text: z.string().min(1).max(20000).optional().describe('نص حر للقراءة بدون تظليل'),
     rate: z.number().min(0.5).max(2).optional().describe('سرعة القراءة (0.5–2، افتراضي 1)'),
     engine: z.enum(['edge', 'browser']).optional().describe('edge = أصوات Microsoft Edge العصبية (افتراضي)، browser = أصوات chrome.tts'),
-    voice: z.string().max(200).optional().describe('اسم صوت من list_tts_voices (مثل ar-EG-SalmaNeural)'),
+    voice: z.string().max(200).optional().describe('اسم صوت من list_tts_voices (مثل ar-EG-ShakirNeural)'),
   }),
   execute: async (a, ctx) => {
     const modes = [
@@ -72,7 +72,10 @@ register({
       try {
         const edgeVoices = await fetchEdgeVoices();
         if (edgeVoices.length && a.voice && !edgeVoices.some((v) => v.name === a.voice)) {
-          const arabic = edgeVoices.filter((v) => v.lang.toLowerCase().startsWith('ar')).slice(0, 8);
+          const arabic = edgeVoices
+            .filter((v) => v.lang.toLowerCase().startsWith('ar'))
+            .sort((a, b) => (a.lang === 'ar-EG' ? 0 : 1) - (b.lang === 'ar-EG' ? 0 : 1) || a.name.localeCompare(b.name))
+            .slice(0, 8);
           return {
             error: 'EDGE_VOICE_NOT_FOUND',
             message: `صوت Edge «${a.voice}» غير موجود. استخدم list_tts_voices({engine:'edge'}) لاختيار صوت.`,
@@ -177,7 +180,7 @@ register({
 register({
   name: 'list_tts_voices',
   description:
-    'يعرض أصوات Microsoft Edge العصبية (افتراضي) أو أصوات chrome.tts في المتصفح. استخدمه لاختيار صوت عربي/إنجليزي قبل read_aloud. للعربية المصرية: ar-EG-SalmaNeural (أنثى) أو ar-EG-ShakirNeural (ذكر).',
+    'يعرض أصوات Microsoft Edge العصبية (افتراضي) أو أصوات chrome.tts في المتصفح. استخدمه لاختيار صوت عربي/إنجليزي قبل read_aloud. للعربية المصرية: ar-EG-ShakirNeural (ذكر — المفضل) أو ar-EG-SalmaNeural (أنثى). الأصوات المتعددة اللغات (Multilingual) تعمل مع كل اللغات.',
   sensitive: false,
   idempotent: true,
   schema: z.object({
@@ -231,7 +234,7 @@ register({
         ? ['en-us', 'en-gb']
         : ['ar-eg', 'ar-sa', 'ar-ae', 'en-us', 'en-gb'];
     const preferredNames = lang.startsWith('ar')
-      ? ['ar-eg-salma', 'ar-eg-shakir']
+      ? ['ar-eg-shakir', 'ar-eg-salma']
       : lang.startsWith('en')
         ? ['en-us-emma', 'en-us-aria', 'en-us-guy', 'en-gb-sonia']
         : [];

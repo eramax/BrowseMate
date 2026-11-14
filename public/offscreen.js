@@ -6,7 +6,7 @@
 
   const TAG = '[BrowseMate][EdgeTTS]';
   const AUDIO_DELIM = new TextEncoder().encode('Path:audio\r\n');
-  const DEFAULT_AR = 'ar-EG-SalmaNeural';
+  const DEFAULT_AR = 'ar-EG-ShakirNeural';
   const DEFAULT_EN = 'en-US-EmmaMultilingualNeural';
 
   /** @type {WebSocket|null} */

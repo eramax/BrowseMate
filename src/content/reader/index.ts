@@ -16,10 +16,35 @@ let blocks: ReaderBlock[] = [];
 let currentPara = 0;
 let isActive = false;
 let ready = false;
-let edgeVoice = '';
+let edgeVoiceAr = '';
+let edgeVoiceEn = '';
+let edgeVoiceOther = '';
 let browserVoice = '';
-const DEFAULT_EDGE_AR = 'ar-EG-SalmaNeural';
+const DEFAULT_EDGE_AR = 'ar-EG-ShakirNeural';
 const DEFAULT_EDGE_EN = 'en-US-EmmaMultilingualNeural';
+const DEFAULT_EDGE_OTHER = 'en-US-EmmaMultilingualNeural';
+
+type TextLang = 'ar' | 'en' | 'other';
+
+function detectTextLang(sample: string): TextLang {
+  const arCount = (sample.match(/[\u0600-\u06FF]/g) || []).length;
+  const enCount = (sample.match(/[A-Za-z]/g) || []).length;
+  const docLang = (document.documentElement.lang || '').toLowerCase();
+  // النص نفسه هو الحكم الأول (عربي مقابل لاتيني)
+  if (arCount > 0 && arCount >= enCount) return 'ar';
+  if (docLang.startsWith('en') && enCount > 0) return 'en';
+  // لغة صفحة غير عربية/إنجليزية → استخدم صوت اللغات الأخرى (Multilingual)
+  if (docLang && !docLang.startsWith('ar') && !docLang.startsWith('en')) return 'other';
+  if (enCount > 0) return 'en';
+  if (arCount > 0) return 'ar';
+  return 'other';
+}
+
+function edgeVoiceFor(lang: TextLang): string {
+  if (lang === 'ar') return edgeVoiceAr || DEFAULT_EDGE_AR;
+  if (lang === 'en') return edgeVoiceEn || DEFAULT_EDGE_EN;
+  return edgeVoiceOther || DEFAULT_EDGE_OTHER;
+}
 
 function notify(message: string): void {
   try { console.info('[BrowseMate Reader]', message); } catch { /* ignore */ }
@@ -78,6 +103,8 @@ function startReading(
     overlay.setSpeed(options.rate);
     try { chrome.storage.local.set({ rate: options.rate }); } catch { /* ignore */ }
   }
+  const sample = usable.slice(0, 4).map((b) => b.text).join(' ').slice(0, 6000);
+  const textLang = detectTextLang(sample);
   const engine: 'edge' | 'browser' = options.engine ?? player.getSettings().engine;
   if (options.engine) {
     player.setSettings({ engine: options.engine });
@@ -87,23 +114,22 @@ function startReading(
   if (options.voice) {
     player.setSettings({ voice: options.voice });
     if (engine === 'edge') {
-      edgeVoice = options.voice;
-      try { chrome.storage.local.set({ edgeVoice: options.voice }); } catch { /* ignore */ }
+      if (textLang === 'ar') {
+        edgeVoiceAr = options.voice;
+        try { chrome.storage.local.set({ edgeVoiceAr: options.voice }); } catch { /* ignore */ }
+      } else if (textLang === 'en') {
+        edgeVoiceEn = options.voice;
+        try { chrome.storage.local.set({ edgeVoiceEn: options.voice }); } catch { /* ignore */ }
+      } else {
+        edgeVoiceOther = options.voice;
+        try { chrome.storage.local.set({ edgeVoiceOther: options.voice }); } catch { /* ignore */ }
+      }
     } else {
       browserVoice = options.voice;
       try { chrome.storage.local.set({ browserVoice: options.voice }); } catch { /* ignore */ }
     }
   } else if (engine === 'edge') {
-    // اختيار تلقائي حسب لغة النص — يمنع قراءة العربية بصوت إنجليزي محفوظ
-    const sample = usable.slice(0, 4).map((b) => b.text).join(' ').slice(0, 6000);
-    const arCount = (sample.match(/[\u0600-\u06FF]/g) || []).length;
-    const enCount = (sample.match(/[A-Za-z]/g) || []).length;
-    const docLang = (document.documentElement.lang || '').toLowerCase();
-    const isArabic = arCount > enCount || (arCount > 0 && docLang.startsWith('ar'));
-    const wantedPrefix = isArabic ? 'ar-' : 'en-';
-    const fallback = isArabic ? DEFAULT_EDGE_AR : DEFAULT_EDGE_EN;
-    const saved = edgeVoice && edgeVoice.toLowerCase().startsWith(wantedPrefix) ? edgeVoice : fallback;
-    player.setSettings({ voice: saved });
+    player.setSettings({ voice: edgeVoiceFor(textLang) });
   } else if (options.engine) {
     player.setSettings({ voice: browserVoice });
   }
@@ -142,9 +168,11 @@ function loadSettings(): void {
       {
         rate: 1,
         voice: '',
-        edgeVoice: '',
-        browserVoice: '',
         engine: 'edge',
+        edgeVoiceAr: '',
+        edgeVoiceEn: '',
+        edgeVoiceOther: '',
+        browserVoice: '',
         paraColor: '#ffc107',
         wordColor: '#00bcd4',
       },
@@ -154,17 +182,30 @@ function loadSettings(): void {
           player.setSettings({ rate });
           overlay.setSpeed(rate);
         }
-        const oldVoice = typeof data?.voice === 'string' ? data.voice : '';
-        edgeVoice = typeof data?.edgeVoice === 'string' && data.edgeVoice
-          ? data.edgeVoice
-          : /Neural$/i.test(oldVoice) ? oldVoice : '';
+        const legacy = typeof data?.voice === 'string' ? data.voice : '';
+        // العربية: Shakir افتراضياً حتى لو كان هناك صوت قديم محفوظ
+        edgeVoiceAr = typeof data?.edgeVoiceAr === 'string' && data.edgeVoiceAr
+          ? data.edgeVoiceAr
+          : DEFAULT_EDGE_AR;
+        edgeVoiceEn = typeof data?.edgeVoiceEn === 'string' && data.edgeVoiceEn
+          ? data.edgeVoiceEn
+          : (/^en-/i.test(legacy) ? legacy : DEFAULT_EDGE_EN);
+        edgeVoiceOther = typeof data?.edgeVoiceOther === 'string' && data.edgeVoiceOther
+          ? data.edgeVoiceOther
+          : DEFAULT_EDGE_OTHER;
         browserVoice = typeof data?.browserVoice === 'string' && data.browserVoice
           ? data.browserVoice
-          : oldVoice && !/Neural$/i.test(oldVoice) ? oldVoice : '';
+          : legacy && !/Neural$/i.test(legacy) ? legacy : '';
         const engine = data?.engine === 'browser' ? 'browser' : 'edge';
         player.setSettings({ engine });
-        const savedVoice = engine === 'edge' ? edgeVoice : browserVoice;
-        if (savedVoice) player.setSettings({ voice: savedVoice });
+        if (!isActive) {
+          if (engine === 'edge') {
+            const pageLang = detectTextLang((document.body?.innerText || '').slice(0, 4000));
+            player.setSettings({ voice: edgeVoiceFor(pageLang) });
+          } else if (browserVoice) {
+            player.setSettings({ voice: browserVoice });
+          }
+        }
         highlighter.setColors({
           ...(typeof data?.paraColor === 'string' ? { paragraph: data.paraColor } : {}),
           ...(typeof data?.wordColor === 'string' ? { word: data.wordColor } : {}),
@@ -288,9 +329,24 @@ chrome.runtime.onMessage.addListener((msg: any, _sender, send) => {
       }
 
       case 'set-voice':
-        if (typeof msg.voice === 'string') {
+        if (typeof msg.voice === 'string' && msg.voice) {
           player.setSettings({ voice: msg.voice });
-          try { chrome.storage.local.set({ voice: msg.voice }); } catch { /* ignore */ }
+          const sample = (blocks.length ? blocks.map((b) => b.text).join(' ') : document.body?.innerText || '').slice(0, 6000);
+          const textLang = detectTextLang(sample);
+          if (player.getSettings().engine === 'edge') {
+            if (textLang === 'ar') edgeVoiceAr = msg.voice;
+            else if (textLang === 'en') edgeVoiceEn = msg.voice;
+            else edgeVoiceOther = msg.voice;
+            try {
+              const patch: Record<string, string> = textLang === 'ar'
+                ? { edgeVoiceAr: msg.voice }
+                : textLang === 'en' ? { edgeVoiceEn: msg.voice } : { edgeVoiceOther: msg.voice };
+              chrome.storage.local.set(patch);
+            } catch { /* ignore */ }
+          } else {
+            browserVoice = msg.voice;
+            try { chrome.storage.local.set({ browserVoice: msg.voice }); } catch { /* ignore */ }
+          }
           send({ ok: true });
         } else {
           send({ ok: false, error: 'BAD_VOICE' });
@@ -306,6 +362,16 @@ chrome.runtime.onMessage.addListener((msg: any, _sender, send) => {
     return true;
   }
 });
+
+// تحديث إعدادات القارئ عند تغييرها من الإعدادات
+try {
+  chrome.storage.onChanged.addListener((changes, area) => {
+    if (area !== 'local') return;
+    if (['rate', 'engine', 'edgeVoiceAr', 'edgeVoiceEn', 'edgeVoiceOther', 'browserVoice', 'paraColor', 'wordColor'].some((k) => k in changes)) {
+      loadSettings();
+    }
+  });
+} catch { /* ignore */ }
 
 // إيقاف الصوت عند مغادرة الصفحة — أفضل جهد
 window.addEventListener('pagehide', () => {

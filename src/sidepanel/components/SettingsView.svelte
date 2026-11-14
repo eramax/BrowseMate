@@ -19,6 +19,15 @@ import { createZip, readZip } from '../../shared/zip';
   let debugMsg = $state('');
   let debugPreview = $state('');
   let skillsMsg = $state('');
+  type EdgeVoiceOption = { name: string; lang: string; gender: string; friendlyName: string };
+  let readerEngine = $state<'edge' | 'browser'>('edge');
+  let edgeVoiceAr = $state('ar-EG-ShakirNeural');
+  let edgeVoiceEn = $state('en-US-EmmaMultilingualNeural');
+  let edgeVoiceOther = $state('en-US-EmmaMultilingualNeural');
+  let readerRate = $state(1);
+  let edgeVoices = $state<EdgeVoiceOption[]>([]);
+  let readerMsg = $state('');
+  let readerLoading = $state(false);
   const filtered = $derived(
     model ? models.filter((m) => m.toLowerCase().includes(model.toLowerCase())) : models,
   );
@@ -47,6 +56,23 @@ import { createZip, readZip } from '../../shared/zip';
     debugSessions: 'جلسات',
     debugOn: 'تم تفعيل التسجيل التشخيصي.',
     debugOff: 'تم إيقاف التسجيل التشخيصي.',
+    reader: 'القراءة الصوتية',
+    readerHint: 'أصوات Microsoft Edge العصبية. الأصوات المتعددة اللغات (Multilingual) تعمل مع كل اللغات. شاكر المصري هو الافتراضي للعربية.',
+    readerEngine: 'محرك القراءة',
+    engineEdge: 'Microsoft Edge (Neural)',
+    engineBrowser: 'أصوات المتصفح (احتياطي)',
+    arabicVoice: 'الصوت العربي',
+    englishVoice: 'الصوت الإنجليزي',
+    otherVoice: 'صوت اللغات الأخرى',
+    readerRate: 'سرعة القراءة',
+    arabicVoicesGroup: 'أصوات عربية',
+    englishVoicesGroup: 'أصوات إنجليزية',
+    multilingualGroup: 'أصوات متعددة اللغات',
+    multilingual: 'متعدد اللغات',
+    readerSaved: 'تم حفظ إعدادات القراءة ✓',
+    loadingVoices: 'جارٍ تحميل أصوات Edge…',
+    voicesFailed: 'تعذر تحميل أصوات Edge — تحقق من الشبكة.',
+    browserHint: 'سيستخدم القارئ صوت المتصفح الافتراضي (chrome.tts).',
     skillsBackup: 'نسخ احتياطي للمهارات',
     exportAll: '⤓ تصدير كل المهارات',
     importAll: '⇪ استيراد ملف مهارات',
@@ -77,12 +103,125 @@ import { createZip, readZip } from '../../shared/zip';
     debugSessions: 'sessions',
     debugOn: 'Debug logging enabled.',
     debugOff: 'Debug logging disabled.',
+    reader: 'Read aloud',
+    readerHint: 'Microsoft Edge neural voices. Multilingual voices work across languages. Egyptian Shakir is the Arabic default.',
+    readerEngine: 'Reader engine',
+    engineEdge: 'Microsoft Edge (Neural)',
+    engineBrowser: 'Browser voices (fallback)',
+    arabicVoice: 'Arabic voice',
+    englishVoice: 'English voice',
+    otherVoice: 'Other languages voice',
+    readerRate: 'Reading speed',
+    arabicVoicesGroup: 'Arabic voices',
+    englishVoicesGroup: 'English voices',
+    multilingualGroup: 'Multilingual voices',
+    multilingual: 'multilingual',
+    readerSaved: 'Reader settings saved ✓',
+    loadingVoices: 'Loading Edge voices…',
+    voicesFailed: 'Could not load Edge voices — check your network.',
+    browserHint: 'The reader will use the default browser voice (chrome.tts).',
     skillsBackup: 'Skills backup',
     exportAll: '⤓ Export all skills',
     importAll: '⇪ Import skills file',
     syncNow: '↻ Sync now',
     skillsHint: 'Only SKILL.md (frontmatter + markdown). Bulk export is a ZIP of skills/<name>/SKILL.md.',
   });
+
+  function isMultiVoice(v: EdgeVoiceOption): boolean {
+    return /multilingual/i.test(v.name) || /multilingual/i.test(v.friendlyName);
+  }
+
+  function uniqueVoices(list: EdgeVoiceOption[]): EdgeVoiceOption[] {
+    const seen = new Set<string>();
+    return list.filter((v) => {
+      if (seen.has(v.name)) return false;
+      seen.add(v.name);
+      return true;
+    });
+  }
+
+  const arNative = $derived(
+    edgeVoices
+      .filter((v) => v.lang.startsWith('ar') && !isMultiVoice(v))
+      .sort((a, b) => (a.lang === 'ar-EG' ? 0 : 1) - (b.lang === 'ar-EG' ? 0 : 1) || a.name.localeCompare(b.name)),
+  );
+  const enNative = $derived(
+    edgeVoices
+      .filter((v) => v.lang.startsWith('en') && !isMultiVoice(v))
+      .sort((a, b) => (a.lang === 'en-US' ? 0 : 1) - (b.lang === 'en-US' ? 0 : 1) || a.name.localeCompare(b.name)),
+  );
+  const multiVoices = $derived(uniqueVoices(edgeVoices.filter(isMultiVoice)));
+
+  function hasVoice(list: EdgeVoiceOption[], name: string): boolean {
+    return list.some((v) => v.name === name);
+  }
+
+  function voiceLabel(v: EdgeVoiceOption): string {
+    const friendly = (v.friendlyName || v.name)
+      .replace(/^Microsoft\s+/, '')
+      .replace(/\s+Online \(Natural\)/, '')
+      .replace(/\s+-\s+/, ' — ');
+    const badge = isMultiVoice(v) ? (lang === 'ar' ? ' ✦ متعدد اللغات' : ' ✦ multilingual') : '';
+    return `${friendly}${badge}`;
+  }
+
+  function loadReaderSettings(): void {
+    try {
+      chrome.storage.local.get(
+        {
+          engine: 'edge',
+          edgeVoiceAr: 'ar-EG-ShakirNeural',
+          edgeVoiceEn: 'en-US-EmmaMultilingualNeural',
+          edgeVoiceOther: 'en-US-EmmaMultilingualNeural',
+          rate: 1,
+        },
+        (data) => {
+          readerEngine = data.engine === 'browser' ? 'browser' : 'edge';
+          edgeVoiceAr = typeof data.edgeVoiceAr === 'string' && data.edgeVoiceAr ? data.edgeVoiceAr : 'ar-EG-ShakirNeural';
+          edgeVoiceEn = typeof data.edgeVoiceEn === 'string' && data.edgeVoiceEn ? data.edgeVoiceEn : 'en-US-EmmaMultilingualNeural';
+          edgeVoiceOther = typeof data.edgeVoiceOther === 'string' && data.edgeVoiceOther ? data.edgeVoiceOther : 'en-US-EmmaMultilingualNeural';
+          const r = Number(data.rate);
+          readerRate = Number.isFinite(r) && r >= 0.5 && r <= 2 ? r : 1;
+        },
+      );
+    } catch { /* ignore */ }
+  }
+
+  async function loadEdgeVoices(): Promise<void> {
+    readerLoading = true;
+    try {
+      const res: any = await rpc('tts-voices', { engine: 'edge' });
+      if (res?.ok && Array.isArray(res.voices) && res.voices.length) {
+        edgeVoices = res.voices;
+      } else {
+        readerMsg = L.voicesFailed;
+      }
+    } catch (e: any) {
+      readerMsg = `${L.voicesFailed}${e?.message ? ` (${e.message})` : ''}`;
+    } finally {
+      readerLoading = false;
+    }
+  }
+
+  let readerSaveTimer: ReturnType<typeof setTimeout> | undefined;
+  function saveReader(): void {
+    try {
+      chrome.storage.local.set(
+        {
+          engine: readerEngine,
+          edgeVoiceAr,
+          edgeVoiceEn,
+          edgeVoiceOther,
+          rate: readerRate,
+        },
+        () => {
+          readerMsg = L.readerSaved;
+          clearTimeout(readerSaveTimer);
+          readerSaveTimer = setTimeout(() => (readerMsg = ''), 1800);
+        },
+      );
+    } catch { /* ignore */ }
+  }
 
   oninit();
 
@@ -93,6 +232,8 @@ import { createZip, readZip } from '../../shared/zip';
     model = res.settings.model;
     approvalMode = res.settings.approvalMode ?? 'sensitive';
     debug = Boolean(res.settings.debug);
+    loadReaderSettings();
+    void loadEdgeVoices();
     if (baseUrl && apiKey) await fetchModels(true);
     await refreshSyncStatus();
   }
@@ -327,6 +468,83 @@ import { createZip, readZip } from '../../shared/zip';
       </div>
       {#if debugMsg}<div class="hint">{debugMsg}</div>{/if}
       {#if debugPreview}<pre class="debug-pre">{debugPreview}</pre>{/if}
+    </div>
+
+    <div class="field">
+      <label>{L.reader}</label>
+      <div class="hint">{L.readerHint}</div>
+
+      <label>{L.readerEngine}</label>
+      <select bind:value={readerEngine} onchange={saveReader}>
+        <option value="edge">{L.engineEdge}</option>
+        <option value="browser">{L.engineBrowser}</option>
+      </select>
+
+      {#if readerEngine === 'edge'}
+        <label>{L.arabicVoice}</label>
+        <select bind:value={edgeVoiceAr} onchange={saveReader} dir="ltr">
+          {#if !hasVoice([...arNative, ...multiVoices], edgeVoiceAr)}
+            <option value={edgeVoiceAr}>{edgeVoiceAr}</option>
+          {/if}
+          {#if arNative.length}
+            <optgroup label={L.arabicVoicesGroup}>
+              {#each arNative as v (v.name)}
+                <option value={v.name}>{voiceLabel(v)}</option>
+              {/each}
+            </optgroup>
+          {/if}
+          {#if multiVoices.length}
+            <optgroup label={L.multilingualGroup}>
+              {#each multiVoices as v (v.name)}
+                <option value={v.name}>{voiceLabel(v)}</option>
+              {/each}
+            </optgroup>
+          {/if}
+        </select>
+
+        <label>{L.englishVoice}</label>
+        <select bind:value={edgeVoiceEn} onchange={saveReader} dir="ltr">
+          {#if !hasVoice([...enNative, ...multiVoices], edgeVoiceEn)}
+            <option value={edgeVoiceEn}>{edgeVoiceEn}</option>
+          {/if}
+          {#if enNative.length}
+            <optgroup label={L.englishVoicesGroup}>
+              {#each enNative as v (v.name)}
+                <option value={v.name}>{voiceLabel(v)}</option>
+              {/each}
+            </optgroup>
+          {/if}
+          {#if multiVoices.length}
+            <optgroup label={L.multilingualGroup}>
+              {#each multiVoices as v (v.name)}
+                <option value={v.name}>{voiceLabel(v)}</option>
+              {/each}
+            </optgroup>
+          {/if}
+        </select>
+
+        <label>{L.otherVoice}</label>
+        <select bind:value={edgeVoiceOther} onchange={saveReader} dir="ltr">
+          {#if !hasVoice(multiVoices, edgeVoiceOther)}
+            <option value={edgeVoiceOther}>{edgeVoiceOther}</option>
+          {/if}
+          {#each multiVoices as v (v.name)}
+            <option value={v.name}>{voiceLabel(v)}</option>
+          {/each}
+        </select>
+      {:else}
+        <div class="hint">{L.browserHint}</div>
+      {/if}
+
+      <label>{L.readerRate}</label>
+      <select bind:value={readerRate} onchange={saveReader} dir="ltr">
+        {#each [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2] as r (r)}
+          <option value={r}>{r}×</option>
+        {/each}
+      </select>
+
+      {#if readerLoading}<div class="hint">{L.loadingVoices}</div>{/if}
+      {#if readerMsg}<div class="hint" style={edgeVoices.length ? 'color:var(--ok)' : 'color:var(--warn)'}>{readerMsg}</div>{/if}
     </div>
 
     <div class="field">
