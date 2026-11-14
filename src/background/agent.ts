@@ -3,6 +3,7 @@ import { streamText, generateText, isStepCount } from 'ai';
 import { makeModel } from './llm';
 import { loadSettings } from './settings';
 import { asAISDKTools } from './tools/registry';
+import { isGroupableUrl, isTabGroupingRequest } from './intent';
 import type { ChatMessage, ToolCallInfo, ToolContext, WorkerToPanel } from '../shared/types';
 import type { SessionStore } from './sessions';
 
@@ -34,6 +35,8 @@ const SYSTEM = `أنت BrowseMate — وكيل متصفح داخل إضافة ك
 - بعد الانتهاء من الأدوات يجب أن تكتب ردًا نهائيًا يلخّص النتيجة — لا تنهِ دورك بأداة فقط.
 - لإنشاء مستندات منسقة (سيرة، خطاب، تقرير): استخدم render_cv أو render_document ببيانات منظمة. لا تكتب HTML ولا تستخدم export_pdf إلا إذا طلب المستخدم PDF مباشراً.
 - لبناء موقع/تطبيق ويب: استخدم ws_write للجزء الأول من index.html، ثم ws_append للاستكمال وedit (diff) للتعديل. استخدم ws_patch فقط لعدة تعديلات في نداء واحد. بعد نجاح edit لا تعيد ws_read؛ انتقل إلى ws_preview. لا تستخدم ws_write بعد أول كتابة إلا مع overwrite:true. لا تكتب الملف كله في نداء واحد، ولا تستخدم قوالب جاهزة. بعد الكتابة استخدم ws_preview ثم preview_diagnostics.
+- لتجميع التبويبات: استخدم list_tabs مرة واحدة ثم group_tabs مرة واحدة مع groups. لا تجمع تبويباً واحداً في كل نداء. التبويبات المثبتة (pinned) لا تُضمّن إلا إذا طلب المستخدم ذلك صراحةً (includePinned:true). لا تدّعِ التجميع بدون groupId من نتيجة الأداة.
+- لا تدّعِ تنفيذ أي إجراء على المتصفح دون استدعاء الأداة المناسبة؛ إن لم تستدعِها فقل بوضوح إنك لم تنفذ.
 - عندما يطلب المستخدم تحويل إجراء/خطوات إلى مهارة: استدعِ save_skill_from_run فوراً. المهارة يجب أن تكون عامة قابلة لإعادة الاستخدام: حدّد whenToUse (المشكلة)، وsite إن كانت للموقع نفسه، ومرّر replacements لتحويل القيم المحددة (روابط، كلمات بحث، أسماء) إلى معاملات {{param}}، وعرّفها في params مع description وexample. لا تعرض JSON ولا تطلب تأكيداً. لا تقل "تم الحفظ" إلا إذا أعادت الأداة saved.
 - إن كانت الخطوات موجودة في سجل الأدوات المرفق بالرسائل، اعتمد عليه كما هو.
 - الردود markdown بلغة المستخدم (غالبًا العربية).`;
@@ -81,6 +84,31 @@ export async function runChat(deps: AgentDeps, sessionId: string, userText: stri
       await deps.sessions.update(sessionId, { title: userText.trim().slice(0, 42) });
     const history: ChatMessage[] = [...session.messages, userMsg];
 
+    // ===== تجميع التبويبات: سياق حتمي + إجبار الأداة في الخطوة الأولى =====
+    const groupIntent = isTabGroupingRequest(userText);
+    let groupingTabs: Array<{
+      id?: number; title: string; url: string; pinned: boolean; groupable: boolean; groupId: number; windowId: number;
+    }> = [];
+    if (groupIntent) {
+      try {
+        groupingTabs = (await chrome.tabs.query({})).map((t) => ({
+          id: t.id,
+          title: (t.title ?? '').slice(0, 120),
+          url: (t.url ?? '').slice(0, 180),
+          pinned: Boolean(t.pinned),
+          groupable: isGroupableUrl(t.url),
+          groupId: t.groupId,
+          windowId: t.windowId,
+        }));
+      } catch {
+        groupingTabs = [];
+      }
+    }
+    const groupingForced = groupIntent && groupingTabs.length > 0;
+    const groupingContext = groupIntent
+      ? `\n\nطلب تجميع تبويبات. هذه التبويبات الحالية (لا تخمّن):\n${JSON.stringify(groupingTabs)}\nاستدعِ group_tabs الآن مرة واحدة مع groups:[{title,color,tabIds},...]. لا تضم pinned إلا إذا طلب المستخدم ذلك صراحةً (includePinned:true). لا ترد بدون group_tabs ولا تدّعِ النجاح بدون groupId.`
+      : '';
+
     // مسودة رد فارغة تُضاف فوراً ثم تُحدَّث — tool calls لا تختفي عند أي انقطاع
     draftId = crypto.randomUUID();
     await deps.sessions.append(sessionId, { id: draftId, role: 'assistant', content: '', ts: Date.now() });
@@ -109,11 +137,20 @@ export async function runChat(deps: AgentDeps, sessionId: string, userText: stri
 
     const result = streamText({
       model,
-      instructions: SYSTEM + `\n\nسياق التبويب النشط الآن: title="${tab?.title ?? ''}" url="${tab?.url ?? ''}"`,
+      instructions:
+        SYSTEM +
+        `\n\nسياق التبويب النشط الآن: title="${tab?.title ?? ''}" url="${tab?.url ?? ''}"` +
+        groupingContext,
       abortSignal: ac.signal,
       stopWhen: isStepCount(MAX_STEPS),
       messages: toModelMessages(history),
       tools: asAISDKTools(ctx, () => planArmed),
+      prepareStep: groupingForced
+        ? ({ stepNumber }: any) =>
+            stepNumber === 0
+              ? { toolChoice: { type: 'tool', toolName: 'group_tabs' } }
+              : undefined
+        : undefined,
     });
 
     for await (const part of result.stream) {
@@ -164,6 +201,14 @@ export async function runChat(deps: AgentDeps, sessionId: string, userText: stri
       } else if (type === 'error') {
         throw (part as any).error;
       }
+    }
+
+    // لا تسمح بادعاء التجميع بدون استدعاء ناجح لـ group_tabs.
+    const grouped = toolLog.some((t) => t.name === 'group_tabs' && t.status === 'ok');
+    if (groupingForced && !grouped && !ac.signal.aborted) {
+      full =
+        (full.trim() ? full + '\n\n' : '') +
+        '> ⚠️ لم أستدعِ group_tabs، لذلك لم تتغير أي مجموعة. أعد المحاولة.';
     }
 
     // ===== رد احتياطي: النموذج أنهى التشغيل بلا نص (استنفاد خطوات/موديل يعيد reasoning فقط) =====

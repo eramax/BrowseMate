@@ -2,7 +2,7 @@
 import type { SkillFile } from '../shared/types';
 import { getSeedRev, setSeedRev, saveSkillsBulk, getSkills } from './skill-store';
 
-const SEED_VERSION = 21;
+const SEED_VERSION = 22;
 
 const SEEDS: SkillFile[] = [
   {
@@ -126,6 +126,24 @@ const SEEDS: SkillFile[] = [
    - إن احتجت قالب HTML ثابتاً، استخدم <template> وcloneNode ثم املأ النصوص بـ textContent.
    - كل CSS/JS داخل الملف. CDN مسموح.
 9) لا تنهِ دورك بوعد («سأصلح»، «سأعيد») بدون تنفيذ الأداة في نفس الدور. اعرض ملخصاً قصيراً فقط.`,
+    params: [],
+    steps: [],
+    version: 1,
+  },
+  {
+    name: 'tab-groups',
+    description: 'ينظّم تبويبات المتصفح في مجموعات حسب الموضوع/الموقع، مع استثناء التبويبات المثبتة افتراضياً',
+    whenToUse: 'عندما يطلب المستخدم تجميع/ترتيب تبويباته أو تنظيمها حسب الموضوع',
+    site: 'أي متصفح',
+    notes: 'list_tabs مرة واحدة، ثم group_tabs مرة واحدة مع groups. لا تضم pinned إلا بطلب صريح. لا تدّعِ النجاح بدون groupId.',
+    instructions: `مهمتك: تجميع تبويبات المتصفح الحالية في مجموعات مفيدة.
+1) استدعِ list_tabs مرة واحدة فقط لقراءة التبويبات (id, title, url, pinned, groupable).
+2) صنّف التبويبات حسب الموضوع/النطاق. لا تفتح أو تغلق أو تنقل أي تبويب.
+3) استدعِ group_tabs مرة واحدة مع groups:[{title,color,tabIds},...]. اجعل الأسماء مختصرة والألوان من القائمة المتاحة.
+4) التبويبات المثبتة (pinned:true) لا تُضمّن إلا إذا طلب المستخدم صراحةً ضم المثبتة — عندها includePinned:true. الافتراضي استثناؤها.
+5) تجاوز التبويبات غير القابلة للتجميع (groupable:false) مثل chrome:// والإضافات؛ group_tabs يتخطاها ويعيدها في skippedUnsupported.
+6) بعد النتيجة اذكر groupId لكل مجموعة وعدد التبويبات، وskippedPinned/skippedUnsupported. لا تقل "تم التجميع" بدون groupId من نتيجة الأداة.
+7) لا تجمع تبويباً واحداً في كل نداء، ولا تعد list_tabs بعد كل مجموعة.`,
     params: [],
     steps: [],
     version: 1,

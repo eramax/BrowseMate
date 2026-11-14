@@ -133,7 +133,11 @@
     port.send({ type: 'chat', sessionId, text });
     clearTimeout(ackTimer);
     ackTimer = setTimeout(() => {
-      if (busy && !liveText && !toolCalls.length) { busy = false; console.warn('BrowseMate: no response from worker'); }
+      if (busy && !liveText && !toolCalls.length) {
+        busy = false;
+        stalled = true;
+        console.warn('BrowseMate: no response from worker');
+      }
     }, 12000);
     startWatchdog();
   }

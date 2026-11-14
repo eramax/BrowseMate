@@ -1,16 +1,27 @@
 // أدوات التبويبات والتنقل — list (قراءة) و navigate/open/close (حساسة) و group_tabs (قراءة)
 import { z } from 'zod';
 import { register } from './registry';
+import { isGroupableUrl } from '../intent';
+import { planGroups } from '../tab-grouping';
 
 register({
   name: 'list_tabs',
-  description: 'يعرض كل النوافذ والتبويبات وحالتها (مجموعة/غير مجمع، النشط منها).',
+  description:
+    'يعرض كل النوافذ والتبويبات (id, title, url, pinned, groupId, windowId, index, active). التبويبات المثبتة تظهر هنا لكن group_tabs يستثنيها افتراضياً.',
   sensitive: false,
   idempotent: true,
   schema: z.object({}),
   execute: async () =>
     (await chrome.tabs.query({})).map((t) => ({
-      id: t.id, title: t.title, url: t.url, groupId: t.groupId, active: t.active,
+      id: t.id,
+      title: (t.title ?? '').slice(0, 160),
+      url: (t.url ?? '').slice(0, 240),
+      pinned: Boolean(t.pinned),
+      groupable: isGroupableUrl(t.url),
+      groupId: t.groupId,
+      windowId: t.windowId,
+      index: t.index,
+      active: t.active,
     })),
 });
 
@@ -51,18 +62,113 @@ register({
   execute: async (a) => { await chrome.tabs.remove(a.tabId); return { closed: a.tabId }; },
 });
 
+const GROUP_COLORS = ['grey', 'blue', 'red', 'yellow', 'green', 'pink', 'purple', 'cyan', 'orange'] as const;
+
+const groupSpec = z.object({
+  title: z.string().optional().describe('اسم المجموعة'),
+  color: z.enum(GROUP_COLORS).optional().describe('لون المجموعة'),
+  tabIds: z.array(z.number()).min(1).describe('معرفات التبويبات من list_tabs'),
+});
+
 register({
   name: 'group_tabs',
-  description: 'ينشئ مجموعة تبويبات باسم ولون من قائمة معرفات تبويبات.',
+  description:
+    'ينشئ مجموعة أو عدة مجموعات تبويبات في نداء واحد. استخدم groups:[{title,color,tabIds},...] بعد list_tabs مرة واحدة. يستثني التبويبات المثبتة (pinned) افتراضياً؛ لا تمرر includePinned:true إلا إذا طلب المستخدم صراحةً ضم المثبتة. يرجع groupId لكل مجموعة — لا تدّعِ النجاح بدونه.',
   sensitive: false,
   schema: z.object({
-    tabIds: z.array(z.number()).min(1),
+    groups: z.array(groupSpec).min(1).optional().describe('مجموعات متعددة في نداء واحد (المفضّل)'),
+    tabIds: z.array(z.number()).min(1).optional().describe('لمجموعة واحدة فقط (توافق قديم)'),
     title: z.string().optional(),
-    color: z.enum(['grey','blue','red','yellow','green','pink','purple','cyan','orange']).optional(),
+    color: z.enum(GROUP_COLORS).optional(),
+    includePinned: z.boolean().optional().describe('ضم التبويبات المثبتة — فقط بطلب صريح'),
   }),
   execute: async (a) => {
-    const groupId = await chrome.tabs.group({ tabIds: a.tabIds });
-    await chrome.tabGroups.update(groupId, { title: a.title, color: a.color });
-    return { groupId, title: a.title };
+    const specs = a.groups?.length
+      ? a.groups
+      : a.tabIds?.length
+        ? [{ title: a.title, color: a.color, tabIds: a.tabIds }]
+        : [];
+    if (!specs.length) return { error: 'مرر groups أو tabIds — لا توجد تبويبات.' };
+
+    const allTabs = await chrome.tabs.query({});
+    const planned = planGroups(
+      specs,
+      allTabs.map((t) => ({
+        id: t.id!,
+        title: t.title,
+        url: t.url,
+        pinned: t.pinned,
+        windowId: t.windowId,
+      })),
+      a.includePinned === true,
+    );
+
+    type GroupResult = {
+      title?: string;
+      color?: string;
+      tabIds: number[];
+      groupIds: Array<{ windowId: number; groupId: number; tabIds: number[] }>;
+      skippedPinned: Array<{ id: number; title: string }>;
+      skippedUnsupported: Array<{ id: number; title: string; url: string }>;
+      missing: number[];
+      error?: string;
+      failures?: Array<{ windowId: number; error: string }>;
+    };
+    const results: GroupResult[] = [];
+
+    for (const plan of planned) {
+      const base = {
+        title: plan.title,
+        color: plan.color,
+        skippedPinned: plan.skippedPinned,
+        skippedUnsupported: plan.skippedUnsupported,
+        missing: plan.missing,
+      };
+
+      if (!plan.eligible.length) {
+        results.push({ ...base, tabIds: [], groupIds: [], error: plan.error ?? 'NO_ELIGIBLE_TABS' });
+        continue;
+      }
+
+      // المجموعة لا تعبر النوافذ: نجمع تبويبات كل نافذة على حدة.
+      const byWindow = new Map<number, number[]>();
+      for (const t of plan.eligible) {
+        const list = byWindow.get(t.windowId) ?? [];
+        list.push(t.id);
+        byWindow.set(t.windowId, list);
+      }
+
+      const groupIds: GroupResult['groupIds'] = [];
+      const failures: Array<{ windowId: number; error: string }> = [];
+      for (const [windowId, tabIds] of byWindow) {
+        try {
+          const groupId = (await chrome.tabs.group({ tabIds: tabIds as [number, ...number[]] })) as number;
+          const props: Record<string, unknown> = {};
+          if (plan.title !== undefined) props.title = plan.title;
+          if (plan.color !== undefined) props.color = plan.color;
+          if (Object.keys(props).length) await chrome.tabGroups.update(groupId, props as any);
+          groupIds.push({ windowId, groupId, tabIds });
+        } catch (e: any) {
+          failures.push({ windowId, error: e?.message ?? String(e) });
+        }
+      }
+
+      results.push({
+        ...base,
+        tabIds: plan.eligible.map((t) => t.id),
+        groupIds,
+        ...(failures.length
+          ? { error: groupIds.length ? 'PARTIAL_GROUPING' : 'GROUPING_FAILED', failures }
+          : {}),
+      });
+    }
+
+    return {
+      groups: results,
+      grouped: results.reduce((n, r) => n + r.groupIds.reduce((m, g) => m + g.tabIds.length, 0), 0),
+      skippedPinned: results.reduce((n, r) => n + r.skippedPinned.length, 0),
+      skippedUnsupported: results.reduce((n, r) => n + r.skippedUnsupported.length, 0),
+      missing: results.reduce((n, r) => n + r.missing.length, 0),
+    };
   },
 });
