@@ -6,20 +6,20 @@ import { withPage } from '../inject';
 register({
   name: 'read_page',
   description:
-    'يقرأ التبويب النشط: العنوان، URL، نص مقتضب، والعناصر التفاعلية (حقول/أزرار/روابط بمعرفات ta-N). اقرأه قبل أي تعديل.',
+    'يقرأ التبويب النشط أو تبويباً محدداً (tabId): العنوان، URL، نص مقتضب، والعناصر التفاعلية (حقول/أزرار/روابط بمعرفات ta-N). اقرأه قبل أي تعديل.',
   sensitive: false,
   idempotent: true,
-  schema: z.object({}),
-  execute: async (_a, ctx) => withPage((await ctx.getActiveTab()).id!, 'read'),
+  schema: z.object({ tabId: z.number().optional().describe('معرف تبويب خلفي (اختياري)') }),
+  execute: async (a, ctx) => withPage(a.tabId ?? (await ctx.getActiveTab()).id!, 'read'),
 });
 
 register({
   name: 'summarize_page',
-  description: 'يستخرج نص المقال من التبويب النشط — خذ النتيجة ولخّصها في ردك.',
+  description: 'يستخرج نص المقال من التبويب النشط أو تبويب محدد (tabId) — خذ النتيجة ولخّصها في ردك.',
   sensitive: false,
   idempotent: true,
-  schema: z.object({}),
-  execute: async (_a, ctx) => withPage((await ctx.getActiveTab()).id!, 'read'),
+  schema: z.object({ tabId: z.number().optional().describe('معرف تبويب خلفي (اختياري)') }),
+  execute: async (a, ctx) => withPage(a.tabId ?? (await ctx.getActiveTab()).id!, 'read'),
 });
 
 register({
@@ -27,15 +27,20 @@ register({
   description: 'يملأ حقول النموذج في التبويب النشط. مرّر قيمًا بمعرفات العناصر من read_page.',
   sensitive: true,
   schema: z.object({
+    tabId: z.number().optional().describe('معرف تبويب خلفي (اختياري)'),
     values: z.array(z.object({ id: z.string(), value: z.string() })).min(1),
   }),
-  execute: async (a, ctx) => withPage((await ctx.getActiveTab()).id!, 'fill', { values: a.values }),
+  execute: async (a, ctx) => withPage(a.tabId ?? (await ctx.getActiveTab()).id!, 'fill', { values: a.values }),
 });
 
 register({
   name: 'click_element',
   description: 'ينقر عنصرًا في التبويب النشط بمعرفه ta-N أو بجزء من نصه.',
   sensitive: true,
-  schema: z.object({ id: z.string().optional(), label: z.string().optional() }),
-  execute: async (a, ctx) => withPage((await ctx.getActiveTab()).id!, 'click', { id: a.id, label: a.label }),
+  schema: z.object({
+    tabId: z.number().optional().describe('معرف تبويب خلفي (اختياري)'),
+    id: z.string().optional(),
+    label: z.string().optional(),
+  }),
+  execute: async (a, ctx) => withPage(a.tabId ?? (await ctx.getActiveTab()).id!, 'click', { id: a.id, label: a.label }),
 });

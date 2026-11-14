@@ -57,12 +57,12 @@ async function ytMainExtract() {
 register({
   name: 'youtube_transcript',
   description:
-    'يجلب النص الكامل (الترجمة الأصلية) من لوحة "إظهار النص" في فيديو يوتيوب المفتوح — يدوية وتلقائية. استخدمه لتلخيص الفيديو. إن لم يكن التبويب فيديو يوتيوب انتقل إليه أولاً بـ navigate.',
+    'يجلب النص الكامل (الترجمة الأصلية) من لوحة "إظهار النص" في فيديو يوتيوب المفتوح أو تبويب محدد (tabId) — يدوية وتلقائية. استخدمه لتلخيص الفيديو.',
   sensitive: false,
   idempotent: true,
-  schema: z.object({}),
-  execute: async (_a, ctx) => {
-    const tab = await ctx.getActiveTab();
+  schema: z.object({ tabId: z.number().optional().describe('معرف تبويب خلفي (اختياري)') }),
+  execute: async (a, ctx) => {
+    const tab = a.tabId !== undefined ? await chrome.tabs.get(a.tabId) : await ctx.getActiveTab();
     let host = '';
     try { host = new URL(tab.url ?? '').hostname; } catch { /* ignore */ }
     if (!/(^|\.)youtube\.com$/.test(host))

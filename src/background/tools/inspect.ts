@@ -8,12 +8,15 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 register({
   name: 'inspect_code',
   description:
-    'يفحص التبويب النشط: أخطاء console، طلبات الشبكة (url/status)، وقائمة السكربتات (ids). اختياريًا scriptId يجلب مصدر ذلك السكربت.',
+    'يفحص التبويب النشط أو تبويباً محدداً (tabId): أخطاء console، طلبات الشبكة (url/status)، وقائمة السكربتات (ids). اختياريًا scriptId يجلب مصدر ذلك السكربت.',
   sensitive: false,
   idempotent: true,
-  schema: z.object({ scriptId: z.string().optional() }),
+  schema: z.object({
+    scriptId: z.string().optional(),
+    tabId: z.number().optional().describe('معرف تبويب خلفي (اختياري)'),
+  }),
   execute: async (a, ctx) => {
-    const tab = await ctx.getActiveTab();
+    const tab = a.tabId !== undefined ? await chrome.tabs.get(a.tabId) : await ctx.getActiveTab();
     const target = { tabId: tab.id! };
     const c = { console: [] as string[], requests: [] as { url: string; status?: number; type: string }[], scripts: [] as { id: string; url: string }[] };
     try {

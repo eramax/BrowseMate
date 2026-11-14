@@ -27,11 +27,12 @@ register({
 
 register({
   name: 'navigate',
-  description: 'ينقل التبويب النشط إلى رابط وينتظر اكتمال التحميل (أو 15 ثانية).',
+  description:
+    'ينقل التبويب النشط أو تبويباً محدداً (tabId) إلى رابط وينتظر اكتمال التحميل (أو 15 ثانية). مع tabId لا يفعّل التبويب — مناسب للعمل في الخلفية. للقراءة فقط استخدم read_page بنفس tabId.',
   sensitive: true,
-  schema: z.object({ url: z.string().url() }),
+  schema: z.object({ url: z.string().url(), tabId: z.number().optional() }),
   execute: async (a, ctx) => {
-    const tab = await ctx.getActiveTab();
+    const tab = a.tabId !== undefined ? await chrome.tabs.get(a.tabId) : await ctx.getActiveTab();
     // المستمع قبل التنقل حتى لا تفوتنا صفحة تُحمّل فوراً
     await new Promise<void>((resolve) => {
       const timer = setTimeout(finish, 15000);
@@ -42,16 +43,20 @@ register({
       chrome.tabs.onUpdated.addListener(done);
       chrome.tabs.update(tab.id!, { url: a.url }).catch(() => finish());
     });
-    return { navigated: a.url };
+    return { navigated: a.url, tabId: tab.id };
   },
 });
 
 register({
   name: 'open_tab',
-  description: 'يفتح تبويبًا جديدًا (في الخلفية افتراضيًا).',
+  description:
+    'يفتح تبويباً جديداً في الخلفية افتراضياً ويعيد tabId. اقرأه بـ read_page({tabId}) أو انقله بـ navigate({tabId})، وأغلقه بـ close_tab. لا يغيّر التبويب النشط.',
   sensitive: true,
   schema: z.object({ url: z.string().url(), active: z.boolean().optional() }),
-  execute: async (a) => chrome.tabs.create({ url: a.url, active: a.active ?? false }),
+  execute: async (a) => {
+    const tab = await chrome.tabs.create({ url: a.url, active: a.active ?? false });
+    return { tabId: tab.id, url: tab.url, active: tab.active };
+  },
 });
 
 register({
