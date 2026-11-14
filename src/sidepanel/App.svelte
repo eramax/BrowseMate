@@ -25,6 +25,7 @@
   let settingsError = $state(false);
   let stalled = $state(false);
   let lastUserText = $state('');
+  let lastSkill = $state<{ name: string; params: Record<string, string> } | undefined>();
   let ackTimer: ReturnType<typeof setTimeout> | undefined;
   let watchdog: ReturnType<typeof setInterval> | undefined;
 
@@ -124,13 +125,14 @@
   $effect(() => { if (tab === 'skills') refreshSkills(); });
 
   // ===== أوامر الشات =====
-  function send(text: string) {
+  function send(text: string, skill?: { name: string; params: Record<string, string> }) {
     lastUserText = text;
+    lastSkill = skill;
     settingsError = false; stalled = false;
     // عرض فوري لرسالتك قبل أي اتصال (optimistic) — SW يحفظها أيضاً قبل الـ LLM
     messages = [...messages, { id: crypto.randomUUID(), role: 'user', content: text, ts: Date.now() }];
     busy = true; liveText = ''; livePlan = []; toolCalls = [];
-    port.send({ type: 'chat', sessionId, text });
+    port.send({ type: 'chat', sessionId, text, ...(skill ? { skill } : {}) });
     clearTimeout(ackTimer);
     ackTimer = setTimeout(() => {
       if (busy && !liveText && !toolCalls.length) {
@@ -146,7 +148,7 @@
     approvals = approvals.filter((a) => a.id !== id);
     port.send({ type: 'approval-response', id, approved: ok });
   }
-  function retry() { if (lastUserText) send(lastUserText); }
+  function retry() { if (lastUserText) send(lastUserText, lastSkill); }
 
   // ===== استشعار انقطاع التشغيل (SW قُتل / انقطع البث) =====
   function startWatchdog() {
@@ -206,7 +208,7 @@
     tab = 'chat';
     messages = [];
     const msg = `شغّل المهارة ${name}${parts.length ? ` بمعاملات ${parts.join(', ')}` : ''}`;
-    send(msg);
+    send(msg, { name, params });
   }
   async function deleteSkill(name: string) {
     await rpc('delete-skill', { name });

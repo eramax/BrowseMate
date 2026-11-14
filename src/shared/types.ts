@@ -27,7 +27,13 @@ export interface Session {
 
 // ===== بروتوكول Panel ↔ SW (Port واحد) =====
 export type PanelToWorker =
-  | { type: 'chat'; sessionId: string; text: string }
+  | {
+      type: 'chat';
+      sessionId: string;
+      text: string;
+      /** مهارة محددة من واجهة التشغيل — تسمح بتخطي list_skills */
+      skill?: { name: string; params: Record<string, string> };
+    }
   | { type: 'approval-response'; id: string; approved: boolean }
   | { type: 'stop' }
   | { type: 'session-switch'; sessionId: string };

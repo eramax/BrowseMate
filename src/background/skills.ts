@@ -14,6 +14,40 @@ export function validateSkill(s: SkillFile): string | null {
   return null;
 }
 
+/** تطبيع معاملات المهارة: يقبل [{key,value}] (متوافق مع بعض المزوّدين) أو كائناً */
+export function normalizeSkillParams(raw: unknown): Record<string, string | number> {
+  const out: Record<string, string | number> = {};
+  if (Array.isArray(raw)) {
+    for (const p of raw) {
+      if (!p || typeof p !== 'object') continue;
+      const key = (p as any).key;
+      const value = (p as any).value;
+      if (typeof key === 'string' && (typeof value === 'string' || typeof value === 'number')) out[key] = value;
+    }
+    return out;
+  }
+  if (raw && typeof raw === 'object') {
+    for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
+      if (typeof v === 'string' || typeof v === 'number') out[k] = v;
+    }
+  }
+  return out;
+}
+
+/** تطبيع وسائط خطوة المهارة (كائن أو JSON string) */
+export function normalizeToolArgs(raw: unknown): Record<string, unknown> {
+  if (typeof raw === 'string') {
+    try {
+      const parsed = JSON.parse(raw);
+      return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+    } catch {
+      return {};
+    }
+  }
+  if (raw && typeof raw === 'object' && !Array.isArray(raw)) return raw as Record<string, unknown>;
+  return {};
+}
+
 /** تعميم مهارة: استبدال قيم محددة (موقع/رابط/كلمة بحث) بمعاملات {{param}} */
 export function generalizeSteps(
   steps: SkillStep[],

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { runSkill, validateSkill, buildSkillFromToolCalls, generalizeSteps } from '../src/background/skills';
+import { runSkill, validateSkill, buildSkillFromToolCalls, generalizeSteps, normalizeSkillParams, normalizeToolArgs } from '../src/background/skills';
 import type { SkillFile } from '../src/shared/types';
 
 const skill: SkillFile = {
@@ -118,5 +118,19 @@ describe('generalizeSteps', () => {
   it('leaves args untouched with no replacements', () => {
     const steps = [{ tool: 'x', args: { a: 'b' } }];
     expect(generalizeSteps(steps, [])).toEqual(steps);
+  });
+});
+
+
+describe('skill params normalization', () => {
+  it('accepts array key/value pairs (provider-safe) and objects', () => {
+    expect(normalizeSkillParams([{ key: 'q', value: 'react' }, { key: 'n', value: 3 }])).toEqual({ q: 'react', n: 3 });
+    expect(normalizeSkillParams({ q: 'react', n: 3 })).toEqual({ q: 'react', n: 3 });
+    expect(normalizeSkillParams('bad')).toEqual({});
+  });
+  it('normalizes tool args from object/JSON string', () => {
+    expect(normalizeToolArgs({ url: 'https://x' })).toEqual({ url: 'https://x' });
+    expect(normalizeToolArgs('{"url":"https://x"}')).toEqual({ url: 'https://x' });
+    expect(normalizeToolArgs('[1,2]')).toEqual({});
   });
 });

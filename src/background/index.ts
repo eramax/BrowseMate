@@ -58,7 +58,7 @@ chrome.runtime.onConnect.addListener((p) => {
   p.onMessage.addListener((msg: PanelToWorker) => {
     if (msg.type === 'chat') {
       activeSessionId = msg.sessionId;
-      runChat({ sessions, emit, getActiveTab, approvals, runs }, msg.sessionId, msg.text)
+      runChat({ sessions, emit, getActiveTab, approvals, runs }, msg.sessionId, msg.text, msg.skill)
         .catch((e) => emit(msg.sessionId, { type: 'error', message: String(e) }));
     } else if (msg.type === 'approval-response') {
       approvals.resolve(msg.id, msg.approved);

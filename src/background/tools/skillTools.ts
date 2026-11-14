@@ -1,7 +1,7 @@
 // أدوات المهارات: run_skill / save_skill / list_skills / delete_skill
 import { z } from 'zod';
 import { register, getTool, allTools } from './registry';
-import { runSkill, validateSkill, generalizeSteps } from '../skills';
+import { runSkill, validateSkill, generalizeSteps, normalizeSkillParams, normalizeToolArgs } from '../skills';
 import { getSkills, saveSkill as storeSkill, deleteSkill as storeDeleteSkill } from '../skill-store';
 import type { SkillFile, SkillStep } from '../../shared/types';
 
@@ -13,15 +13,19 @@ const skillKV = {
 
 register({
   name: 'run_skill',
-  description: 'ينفذ مهارة محفوظة بالاسم مع معاملاتها ويعيد نتائج كل الخطوات. استخدم list_skills أولاً إن لم تكن متأكدًا من الاسم.',
+  description: 'ينفذ مهارة محفوظة بالاسم مع معاملاتها ويعيد نتائج كل الخطوات. إذا وصل الاسم الدقيق من واجهة التشغيل فاستدعها مباشرة؛ استخدم list_skills فقط إن لم تكن متأكداً من الاسم.',
   sensitive: false, // بوابة الدفعة المدمجة أدناه هي المعتمدة (المواصفة §4)
   schema: z.object({
     name: z.string(),
-    params: z.record(z.string(), z.union([z.string(), z.number()])).optional(),
+    // Nvidia/بعض المزوّدين يرفضون JSON Schema الناتج عن z.record (propertyNames).
+    // نقبل أي شكل ونطبّعه في execute: أزواج [{key,value}] أو كائن.
+    params: z.any().optional().describe('معاملات المهارة: [{key,value}] أو كائن {"name":"value"}'),
   }),
   execute: async (a, ctx) => {
     const skill = (await skillKV.all())[a.name];
     if (!skill) return { error: `مهارة غير موجودة: ${a.name}` };
+
+    const params = normalizeSkillParams(a.params);
 
     // مهارة Playbook: تعليمات ينفذها النموذج بالأدوات (مثل توليد CV مخصص)
     if (skill.instructions?.trim()) {
@@ -41,12 +45,12 @@ register({
     // موافقة مجمعة واحدة على كل الخطوات — تُتخطى في وضع "بدون سؤال"
     const planSteps = skill.steps.map((s) => (s.approval === true ? `${s.tool} ⚠` : s.tool));
     if (ctx.approvalMode !== 'never') {
-      const ok = await ctx.requestApproval(`run_skill:${a.name}`, { params: a.params ?? {} }, planSteps);
+      const ok = await ctx.requestApproval(`run_skill:${a.name}`, { params }, planSteps);
       if (!ok) return { error: 'REFUSED_BY_USER', message: 'ألغى المستخدم' };
     }
     return {
       skill: { name: skill.name, description: skill.description, whenToUse: skill.whenToUse, site: skill.site, notes: skill.notes, params: skill.params },
-      ...(await runSkill(skill, a.params ?? {}, {
+      ...(await runSkill(skill, params, {
         getTool,
         emit: (evt) => ctx.emit(evt as any),
         isSensitive: (t) => allTools().find((x) => x.name === t)?.sensitive ?? false,
@@ -78,7 +82,7 @@ register({
     })).optional(),
     steps: z.array(z.object({
       tool: z.string().describe('اسم أداة موجودة'),
-      args: z.record(z.string(), z.any()).optional().describe('وسائط الأداة، ويمكن استخدام {{param}}'),
+      args: z.any().optional().describe('وسائط الأداة ككائن JSON، ويمكن استخدام {{param}}'),
       approval: z.boolean().optional(),
       note: z.string().optional(),
     })).min(1),
@@ -91,7 +95,7 @@ register({
       site: a.site?.trim() || undefined,
       notes: a.notes?.trim() || undefined,
       params: a.params ?? [],
-      steps: (a.steps ?? []).map((s: any) => ({ tool: s.tool, args: s.args ?? {}, approval: s.approval, note: s.note })),
+      steps: (a.steps ?? []).map((s: any) => ({ tool: s.tool, args: normalizeToolArgs(s.args), approval: s.approval, note: s.note })),
       version: 1,
     };
     const unknown = skill.steps.filter((s) => !getTool(s.tool));
@@ -158,7 +162,7 @@ register({
 
 register({
   name: 'list_skills',
-  description: 'يسرد المهارات المحفوظة (اسم، وصف، معاملات).',
+  description: 'يسرد المهارات المحفوظة (اسم، وصف، معاملات) للاستكشاف أو عندما لا تعرف اسم المهارة. لا تستدعِه إذا وصل الاسم الدقيق من واجهة التشغيل.',
   sensitive: false,
   idempotent: true,
   schema: z.object({}),

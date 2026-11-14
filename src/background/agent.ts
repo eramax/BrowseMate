@@ -37,13 +37,19 @@ const SYSTEM = `أنت BrowseMate — وكيل متصفح داخل إضافة ك
 - لبناء موقع/تطبيق ويب: استخدم ws_write للجزء الأول من index.html، ثم ws_append للاستكمال وedit (diff) للتعديل. استخدم ws_patch فقط لعدة تعديلات في نداء واحد. بعد نجاح edit لا تعيد ws_read؛ انتقل إلى ws_preview. لا تستخدم ws_write بعد أول كتابة إلا مع overwrite:true. لا تكتب الملف كله في نداء واحد، ولا تستخدم قوالب جاهزة. بعد الكتابة استخدم ws_preview ثم preview_diagnostics.
 - لتجميع التبويبات: استخدم list_tabs مرة واحدة ثم group_tabs مرة واحدة مع groups. لا تجمع تبويباً واحداً في كل نداء. التبويبات المثبتة (pinned) لا تُضمّن إلا إذا طلب المستخدم ذلك صراحةً (includePinned:true). لا تدّعِ التجميع بدون groupId من نتيجة الأداة.
 - لا تدّعِ تنفيذ أي إجراء على المتصفح دون استدعاء الأداة المناسبة؛ إن لم تستدعِها فقل بوضوح إنك لم تنفذ.
+- إذا وصلت مهارة محددة من واجهة التشغيل (اسم + معاملات) فاستدعِ run_skill مباشرة؛ لا تستدعِ list_skills. استخدم list_skills فقط للاستكشاف أو إذا لم تعرف الاسم.
 - عندما يطلب المستخدم تحويل إجراء/خطوات إلى مهارة: استدعِ save_skill_from_run فوراً. المهارة يجب أن تكون عامة قابلة لإعادة الاستخدام: حدّد whenToUse (المشكلة)، وsite إن كانت للموقع نفسه، ومرّر replacements لتحويل القيم المحددة (روابط، كلمات بحث، أسماء) إلى معاملات {{param}}، وعرّفها في params مع description وexample. لا تعرض JSON ولا تطلب تأكيداً. لا تقل "تم الحفظ" إلا إذا أعادت الأداة saved.
 - إن كانت الخطوات موجودة في سجل الأدوات المرفق بالرسائل، اعتمد عليه كما هو.
 - الردود markdown بلغة المستخدم (غالبًا العربية).`;
 
 interface ToolLogEntry extends ToolCallInfo { result?: string }
 
-export async function runChat(deps: AgentDeps, sessionId: string, userText: string) {
+export async function runChat(
+  deps: AgentDeps,
+  sessionId: string,
+  userText: string,
+  skill?: { name: string; params: Record<string, string> },
+) {
   const runId = crypto.randomUUID();
   const ac = new AbortController();
   deps.runs.set(runId, { ac, sessionId });
@@ -108,6 +114,9 @@ export async function runChat(deps: AgentDeps, sessionId: string, userText: stri
     const groupingContext = groupIntent
       ? `\n\nطلب تجميع تبويبات. هذه التبويبات الحالية (لا تخمّن):\n${JSON.stringify(groupingTabs)}\nاستدعِ group_tabs الآن مرة واحدة مع groups:[{title,color,tabIds},...]. لا تضم pinned إلا إذا طلب المستخدم ذلك صراحةً (includePinned:true). لا ترد بدون group_tabs ولا تدّعِ النجاح بدون groupId.`
       : '';
+    const skillContext = skill
+      ? `\n\nالمستخدم يشغّل المهارة "${skill.name}" مباشرة بمعاملات ${JSON.stringify(skill.params)}. استدعِ run_skill الآن بهذا الاسم الدقيق وهذه المعاملات؛ لا تستدعِ list_skills.`
+      : '';
 
     // مسودة رد فارغة تُضاف فوراً ثم تُحدَّث — tool calls لا تختفي عند أي انقطاع
     draftId = crypto.randomUUID();
@@ -140,17 +149,23 @@ export async function runChat(deps: AgentDeps, sessionId: string, userText: stri
       instructions:
         SYSTEM +
         `\n\nسياق التبويب النشط الآن: title="${tab?.title ?? ''}" url="${tab?.url ?? ''}"` +
-        groupingContext,
+        groupingContext +
+        skillContext,
       abortSignal: ac.signal,
       stopWhen: isStepCount(MAX_STEPS),
       messages: toModelMessages(history),
       tools: asAISDKTools(ctx, () => planArmed),
-      prepareStep: groupingForced
+      prepareStep: skill
         ? ({ stepNumber }: any) =>
             stepNumber === 0
-              ? { toolChoice: { type: 'tool', toolName: 'group_tabs' } }
+              ? { toolChoice: { type: 'tool', toolName: 'run_skill' } }
               : undefined
-        : undefined,
+        : groupingForced
+          ? ({ stepNumber }: any) =>
+              stepNumber === 0
+                ? { toolChoice: { type: 'tool', toolName: 'group_tabs' } }
+                : undefined
+          : undefined,
     });
 
     for await (const part of result.stream) {
