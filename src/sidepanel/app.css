@@ -311,3 +311,10 @@ input, textarea, select { font: inherit; }
   text-align: center;
   font-variant-numeric: tabular-nums;
 }
+
+.voice-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 4px;
+}

@@ -6,21 +6,26 @@
   let {
     player,
     lang,
+    live = true,
     onPlay,
     onPause,
     onStop,
     onSeek,
     onPrev,
     onNext,
+    onReplay,
   }: {
     player: TtsPanelState;
     lang: Lang;
-    onPlay: () => void;
-    onPause: () => void;
-    onStop: () => void;
-    onSeek: (time: number) => void;
-    onPrev: () => void;
-    onNext: () => void;
+    /** true = مشغل حي، false = رسالة صوتية محفوظة قابلة لإعادة التشغيل */
+    live?: boolean;
+    onPlay?: () => void;
+    onPause?: () => void;
+    onStop?: () => void;
+    onSeek?: (time: number) => void;
+    onPrev?: () => void;
+    onNext?: () => void;
+    onReplay?: () => void;
   } = $props();
 
   let seekValue = $state(0);
@@ -30,7 +35,7 @@
   });
 
   const dir = $derived(lang === 'ar' ? 'rtl' : 'ltr');
-  const canSeek = $derived(player.duration > 0.1);
+  const canSeek = $derived(live && player.duration > 0.1);
   const pct = $derived(canSeek ? Math.max(0, Math.min(1, seekValue / player.duration)) : 0);
   const engineLabel = $derived(player.engine === 'edge' ? 'Edge' : lang === 'ar' ? 'المتصفح' : 'Browser');
   const bars = [7, 12, 18, 10, 22, 14, 8, 19, 13, 24, 9, 16, 21, 11, 7, 17, 12, 23, 14, 8, 18, 13, 21, 10, 15, 19, 9, 7];
@@ -47,10 +52,13 @@
   <button
     type="button"
     class="voice-play"
-    title={player.playing ? (lang === 'ar' ? 'إيقاف مؤقت' : 'Pause') : (lang === 'ar' ? 'تشغيل' : 'Play')}
-    onclick={player.playing ? onPause : onPlay}
+    title={live && player.playing ? (lang === 'ar' ? 'إيقاف مؤقت' : 'Pause') : (lang === 'ar' ? 'تشغيل' : 'Play')}
+    onclick={() => {
+      if (!live) { onReplay?.(); return; }
+      if (player.playing) onPause?.(); else onPlay?.();
+    }}
   >
-    {player.playing ? '⏸' : '▶'}
+    {live && player.playing ? '⏸' : '▶'}
   </button>
 
   <div class="voice-body">
@@ -58,10 +66,10 @@
     <div class="voice-wave-wrap">
       <div class="voice-wave" aria-hidden="true">
         {#each bars as h, i}
-          <span class="bar" class:on={i / bars.length <= pct} style={`height:${h}px`}></span>
+          <span class="bar" class:on={live ? i / bars.length <= pct : true} style={`height:${h}px`}></span>
         {/each}
       </div>
-      {#if canSeek}
+      {#if live && canSeek}
         <input
           class="voice-seek"
           type="range"
@@ -83,15 +91,19 @@
     </div>
 
     <div class="voice-meta">
-      <span class="voice-time">{fmt(seekValue)}{canSeek ? ` / ${fmt(player.duration)}` : ''}</span>
-      {#if player.total > 1}<span class="voice-count">{player.index + 1}/{player.total}</span>{/if}
+      {#if live && canSeek}
+        <span class="voice-time">{fmt(seekValue)} / {fmt(player.duration)}</span>
+      {/if}
+      {#if live && player.total > 1}<span class="voice-count">{player.index + 1}/{player.total}</span>{/if}
       <span class="voice-engine">{engineLabel}</span>
       <span class="voice-spacer"></span>
-      {#if player.total > 1}
+      {#if live && player.total > 1}
         <button type="button" class="voice-mini" title={lang === 'ar' ? 'السابق' : 'Previous'} onclick={onPrev}>⏮</button>
         <button type="button" class="voice-mini" title={lang === 'ar' ? 'التالي' : 'Next'} onclick={onNext}>⏭</button>
       {/if}
-      <button type="button" class="voice-mini stop" title={lang === 'ar' ? 'إيقاف' : 'Stop'} onclick={onStop}>⏹</button>
+      {#if live}
+        <button type="button" class="voice-mini stop" title={lang === 'ar' ? 'إيقاف' : 'Stop'} onclick={onStop}>⏹</button>
+      {/if}
     </div>
   </div>
 </div>

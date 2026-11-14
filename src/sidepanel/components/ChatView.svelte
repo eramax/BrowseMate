@@ -1,6 +1,6 @@
 <script lang="ts">
   // الشات: مبدّل الجلسات مدمج + الرسائل + مؤشر عمل حي + الموافقات + التقدم
-  import type { ChatMessage, ToolCallInfo, TtsPanelState } from '../../shared/types';
+  import type { ChatMessage, ToolCallInfo, TtsPanelState, VoiceMessage as VoiceData } from '../../shared/types';
   import type { Lang } from '../../shared/i18n';
   import Message from './Message.svelte';
   import VoiceMessage from './VoiceMessage.svelte';
@@ -10,7 +10,7 @@
     sessions, currentId, settingsError, stalled,
     send, stop, approve, retry, openSettings,
     openSession, createSession, removeSession, queuedText,
-    ttsState, ttsPlay, ttsPause, ttsStop, ttsSeek, ttsReplay, ttsPrev, ttsNext,
+    ttsState, ttsPlay, ttsPause, ttsStop, ttsSeek, ttsReplay, ttsPrev, ttsNext, ttsReplayVoice,
   }: {
     messages: ChatMessage[];
     liveText: string;
@@ -41,6 +41,7 @@
     ttsReplay: () => void;
     ttsPrev: () => void;
     ttsNext: () => void;
+    ttsReplayVoice: (v: VoiceData) => void;
   } = $props();
 
   let text = $state('');
@@ -69,16 +70,19 @@
 
   const currentTitle = $derived(sessions.find((s) => s.id === currentId)?.title ?? L.newSession);
   const runningTool = $derived(toolCalls.find((c) => c.status === 'running')?.name);
-  // نخفي نسخة السجل أثناء التشغيل حتى لا تظهر الرسالة الصوتية مرتين
+  // صوت مرتبط بهذه الجلسة فقط — لا يظهر مشغل جلسة أخرى
+  const sessionTts = $derived(ttsState && ttsState.sessionId === currentId ? ttsState : null);
+
+  // الرسالة الصوتية المحفوظة المطابقة للصوت الحالي (لتشغيلها كمشغل واحد)
   const activeHistoryVoiceId = $derived.by(() => {
-    if (!ttsState?.active) return '';
+    if (!sessionTts?.active) return '';
     const rev = [...messages].reverse();
     for (const m of rev) {
       for (const v of [...(m.voices ?? [])].reverse()) {
-        if (v.text === ttsState.text && (v.voice || '') === (ttsState.voice || '')) return v.id;
+        if (v.text === sessionTts.text && (v.voice || '') === (sessionTts.voice || '')) return v.id;
       }
     }
-    if (ttsState.tabId != null) {
+    if (sessionTts.tabId != null) {
       for (const m of rev) {
         const v = m.voices?.[m.voices.length - 1];
         if (v) return v.id;
@@ -86,6 +90,31 @@
     }
     return '';
   });
+
+  function historyPlayer(v: VoiceData): TtsPanelState {
+    return {
+      active: true,
+      playing: false,
+      engine: v.engine,
+      title: '',
+      text: v.text,
+      index: 0,
+      total: 1,
+      currentTime: 0,
+      duration: 0,
+      tabId: null,
+      voice: v.voice,
+      rate: v.rate,
+      sessionId: currentId,
+    };
+  }
+
+  function livePlay(): void {
+    if (!sessionTts) return;
+    const ended = sessionTts.duration > 0 && sessionTts.currentTime >= sessionTts.duration - 0.25;
+    if (!ended && sessionTts.currentTime > 0.2) ttsPlay();
+    else ttsReplay();
+  }
   const suggestions = $derived(lang === 'ar' ? [
     'لخّص هذه الصفحة',
     'ما أخطاء console في هذه الصفحة؟',
@@ -108,7 +137,7 @@
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submit(); }
   }
   $effect(() => {
-    void messages.length + liveText.length + toolCalls.length + (ttsState?.active ? 1 : 0);
+    void messages.length + liveText.length + toolCalls.length + (sessionTts?.active ? 1 : 0);
     requestAnimationFrame(() => scroller?.scrollTo({ top: scroller.scrollHeight }));
   });
 </script>
@@ -152,7 +181,34 @@
 
   <div class="msgs" bind:this={scroller}>
     {#each messages as m (m.id)}
-      <Message msg={m} {lang} activeVoiceId={activeHistoryVoiceId} />
+      <Message msg={m} {lang}>
+        {#if m.voices?.length}
+          <div class="voice-stack">
+            {#each m.voices as v (v.id)}
+              {#if sessionTts?.active && v.id === activeHistoryVoiceId}
+                <VoiceMessage
+                  player={sessionTts}
+                  {lang}
+                  live={true}
+                  onPlay={livePlay}
+                  onPause={ttsPause}
+                  onStop={ttsStop}
+                  onSeek={ttsSeek}
+                  onPrev={ttsPrev}
+                  onNext={ttsNext}
+                />
+              {:else}
+                <VoiceMessage
+                  player={historyPlayer(v)}
+                  {lang}
+                  live={false}
+                  onReplay={() => ttsReplayVoice(v)}
+                />
+              {/if}
+            {/each}
+          </div>
+        {/if}
+      </Message>
     {/each}
 
     {#if busy}
@@ -167,7 +223,7 @@
         </div>
       {/if}
       {#if liveText}
-        <Message msg={{ id: 'live', role: 'assistant', content: liveText, ts: 0 }} {lang} activeVoiceId={activeHistoryVoiceId} />
+        <Message msg={{ id: 'live', role: 'assistant', content: liveText, ts: 0 }} {lang} />
       {:else if !toolCalls.length}
         <div class="typing" dir={lang === 'ar' ? 'rtl' : 'ltr'}>
           <span class="dot"></span><span class="dot"></span><span class="dot"></span>
@@ -188,17 +244,14 @@
       </div>
     {/if}
 
-    {#if ttsState?.active}
+    {#if sessionTts?.active && !activeHistoryVoiceId}
       <div class="msg assistant voice-msg" dir={lang === 'ar' ? 'rtl' : 'ltr'}>
         <div class="who"><span class="logo">B</span> BrowseMate</div>
         <VoiceMessage
-          player={ttsState}
+          player={sessionTts}
           {lang}
-          onPlay={() => {
-            const ended = ttsState.duration > 0 && ttsState.currentTime >= ttsState.duration - 0.25;
-            if (!ended && ttsState.currentTime > 0.2) ttsPlay();
-            else ttsReplay();
-          }}
+          live={true}
+          onPlay={livePlay}
           onPause={ttsPause}
           onStop={ttsStop}
           onSeek={ttsSeek}

@@ -268,6 +268,7 @@
         ttsReplay={() => rpc('tts-replay')}
         ttsPrev={() => rpc('tts-prev')}
         ttsNext={() => rpc('tts-next')}
+        ttsReplayVoice={(v) => rpc('tts-speak-text', { text: v.text, voice: v.voice, rate: v.rate, engine: v.engine, sessionId })}
       />
     {:else if tab === 'skills'}
       <SkillList {skills} {lang} run={runSkill} remove={deleteSkill} refresh={refreshSkills} />

@@ -3,21 +3,27 @@
   import { attach, type FlowView } from '../lib/flowdown';
   import { textDir } from '../../shared/i18n';
   import { rpc } from '../lib/port';
-  import type { ChatMessage, VoiceMessage } from '../../shared/types';
+  import type { ChatMessage } from '../../shared/types';
+  import type { Snippet } from 'svelte';
 
-  let { msg, lang = 'en', activeVoiceId = '' }: { msg: ChatMessage; lang?: 'ar' | 'en'; activeVoiceId?: string } = $props();
+  let {
+    msg,
+    lang = 'en',
+    children,
+  }: {
+    msg: ChatMessage;
+    lang?: 'ar' | 'en';
+    /** محتوى إضافي داخل رسالة المساعد (مثل بطاقة صوتية) */
+    children?: Snippet;
+  } = $props();
+
   let host = $state<HTMLElement>();
   let view: FlowView | undefined;
   const dir = $derived(textDir(msg.content));
-  const visibleVoices = $derived((msg.voices ?? []).filter((v) => v.id !== activeVoiceId));
   const planLabel = $derived(lang === 'ar' ? 'الخطة' : 'Plan');
   const L = $derived(lang === 'ar'
-    ? { download: '⬇ تحميل', print: '🖨 طباعة / PDF', voice: 'رسالة صوتية' }
-    : { download: '⬇ Download', print: '🖨 Print / PDF', voice: 'Voice message' });
-  const voiceBars = [7, 12, 18, 10, 21, 14, 8, 19, 12, 23, 9, 16, 20, 11, 7, 17, 13, 22, 10, 15, 19, 9];
-  async function replayVoice(v: VoiceMessage) {
-    await rpc('tts-speak-text', { text: v.text, voice: v.voice, rate: v.rate, engine: v.engine });
-  }
+    ? { download: '⬇ تحميل', print: '🖨 طباعة / PDF' }
+    : { download: '⬇ Download', print: '🖨 Print / PDF' });
 
   $effect(() => {
     if (!host) return;
@@ -70,52 +76,6 @@
     {#if msg.content}
       <div class="flow-host" bind:this={host}></div>
     {/if}
-    {#if visibleVoices.length}
-      <div class="voice-list">
-        {#each visibleVoices as v (v.id)}
-          <button type="button" class="history-voice" onclick={() => replayVoice(v)} title={v.text}>
-            <span class="hv-play">▶</span>
-            <span class="hv-wave" aria-hidden="true">
-              {#each voiceBars as h}
-                <span style={`height:${h}px`}></span>
-              {/each}
-            </span>
-            <span class="hv-meta">{v.engine === 'edge' ? 'Edge' : 'Browser'} · {L.voice}</span>
-          </button>
-        {/each}
-      </div>
-    {/if}
+    {@render children?.()}
   </div>
 {/if}
-
-<style>
-  .voice-list { display: flex; flex-direction: column; gap: 6px; margin-top: 4px; }
-  .history-voice {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    max-width: 340px;
-    padding: 7px 9px;
-    background: var(--surface-2, var(--surface));
-    border: 1px solid var(--border-soft);
-    border-radius: 16px;
-    cursor: pointer;
-    text-align: start;
-    color: inherit;
-  }
-  .history-voice:hover { border-color: var(--accent); }
-  .hv-play {
-    flex: none;
-    width: 30px;
-    height: 30px;
-    border-radius: 50%;
-    display: grid;
-    place-items: center;
-    color: #fff;
-    font-size: 13px;
-    background: linear-gradient(135deg, #6366f1, #8b5cf6);
-  }
-  .hv-wave { display: flex; align-items: center; gap: 2px; height: 22px; flex: 1; min-width: 80px; }
-  .hv-wave span { flex: 1; min-width: 1px; border-radius: 2px; background: var(--border); }
-  .hv-meta { flex: none; font-size: 9px; color: var(--muted); white-space: nowrap; }
-</style>

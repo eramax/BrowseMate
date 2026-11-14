@@ -63,6 +63,8 @@ export interface TtsPanelState {
   tabId: number | null;
   voice: string;
   rate: number;
+  /** جلسة المحادثة التي بدأت الصوت — تمنع ظهور المشغل في جلسات أخرى */
+  sessionId: string;
 }
 
 export type WorkerToPanel =

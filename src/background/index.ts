@@ -10,7 +10,7 @@ import { debugStore, logSystemDebug } from './debug';
 import { chromeKV } from '../shared/storage';
 import { getTtsVoices, ttsPause, ttsResume, ttsSpeak, ttsStop } from './tts';
 import { edgeCancel, edgePause, edgeResume, edgeSeek, edgeSpeak, edgeStop, fetchEdgeVoices } from './edge';
-import { getTtsState, handleEdgeEvent, resetTtsState, setTtsEmitter, setTtsState, speakTextDirect } from './tts-session';
+import { getTtsChatSession, getTtsState, handleEdgeEvent, resetTtsState, setTtsChatSession, setTtsEmitter, setTtsState, speakTextDirect } from './tts-session';
 import { validateSkill, buildSkillFromToolCalls } from './skills';
 import {
   getSkills, getOrderedSkills, saveSkill as storeSkill, deleteSkill as storeDeleteSkill,
@@ -77,6 +77,7 @@ chrome.runtime.onConnect.addListener((p) => {
   p.onMessage.addListener((msg: PanelToWorker) => {
     if (msg.type === 'chat') {
       activeSessionId = msg.sessionId;
+      setTtsChatSession(msg.sessionId);
       runChat({ sessions, emit, getActiveTab, approvals, runs }, msg.sessionId, msg.text, msg.skill)
         .catch((e) => emit(msg.sessionId, { type: 'error', message: String(e) }));
     } else if (msg.type === 'approval-response') {
@@ -86,6 +87,7 @@ chrome.runtime.onConnect.addListener((p) => {
       for (const r of runs.values()) r.ac.abort();
     } else if (msg.type === 'session-switch') {
       activeSessionId = msg.sessionId;
+      setTtsChatSession(msg.sessionId);
     }
   });
 });
@@ -134,6 +136,7 @@ chrome.runtime.onMessage.addListener((msg: any, sender, send) => {
             tabId,
             voice: String(msg.voice || ''),
             rate: Number(msg.rate) || 1,
+            sessionId: getTtsChatSession(),
           });
 
           if (requested === 'edge') {
@@ -171,7 +174,7 @@ chrome.runtime.onMessage.addListener((msg: any, sender, send) => {
           break;
         }
         case 'tts-speak-text':
-          send(await speakTextDirect(String(msg.text || ''), msg.voice, msg.rate, msg.engine));
+          send(await speakTextDirect(String(msg.text || ''), msg.voice, msg.rate, msg.engine, msg.sessionId));
           break;
         case 'tts-replay': {
           const st = getTtsState();
@@ -184,7 +187,7 @@ chrome.runtime.onMessage.addListener((msg: any, sender, send) => {
             send({ ok: false, error: 'NO_REPLAY' });
             break;
           }
-          send(await speakTextDirect(st.text, st.voice, st.rate, st.engine));
+          send(await speakTextDirect(st.text, st.voice, st.rate, st.engine, st.sessionId));
           break;
         }
         case 'tts-pause': {
@@ -259,8 +262,15 @@ chrome.runtime.onMessage.addListener((msg: any, sender, send) => {
         }
         case 'ensure-session': {
           const first = (await sessions.list())[0];
-          if (first) { send({ ok: true, id: first.id }); break; }
+          if (first) {
+            activeSessionId = first.id;
+            setTtsChatSession(first.id);
+            send({ ok: true, id: first.id });
+            break;
+          }
           const s = await sessions.create(msg.title || 'New chat');
+          activeSessionId = s.id;
+          setTtsChatSession(s.id);
           send({ ok: true, id: s.id });
           break;
         }
@@ -269,6 +279,7 @@ chrome.runtime.onMessage.addListener((msg: any, sender, send) => {
         case 'new-session': {
           const s = await sessions.create(msg.title || 'New chat');
           activeSessionId = s.id;
+          setTtsChatSession(s.id);
           send({ ok: true, session: s });
           break;
         }

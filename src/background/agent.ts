@@ -5,6 +5,7 @@ import { loadSettings } from './settings';
 import { allTools, asAISDKTools } from './tools/registry';
 import { isGroupableUrl, isTabGroupingRequest } from './intent';
 import { createDebugLogger, type DebugLogger } from './debug';
+import { setTtsChatSession } from './tts-session';
 import type { ChatMessage, ToolCallInfo, ToolContext, WorkerToPanel, VoiceMessage } from '../shared/types';
 import type { SessionStore } from './sessions';
 
@@ -56,6 +57,7 @@ export async function runChat(
   skill?: { name: string; params: Record<string, string> },
 ) {
   const runId = crypto.randomUUID();
+  setTtsChatSession(sessionId);
   let debugRef: DebugLogger | undefined;
   const ac = new AbortController();
   deps.runs.set(runId, { ac, sessionId });

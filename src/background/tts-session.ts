@@ -17,10 +17,20 @@ const EMPTY_TTS_STATE: TtsPanelState = {
   tabId: null,
   voice: '',
   rate: 1,
+  sessionId: '',
 };
 
 let state: TtsPanelState = { ...EMPTY_TTS_STATE };
 let emit: ((s: TtsPanelState) => void) | null = null;
+let chatSessionId = '';
+
+export function setTtsChatSession(id: string): void {
+  chatSessionId = id;
+}
+
+export function getTtsChatSession(): string {
+  return chatSessionId;
+}
 
 export function setTtsEmitter(fn: (s: TtsPanelState) => void): void {
   emit = fn;
@@ -65,6 +75,7 @@ export async function speakTextDirect(
   voice: string | undefined,
   rate: number | undefined,
   engine: 'edge' | 'browser' | undefined,
+  sessionId?: string,
 ): Promise<any> {
   const eng: 'edge' | 'browser' = engine === 'browser' ? 'browser' : 'edge';
   const chosenVoice = String(voice || '') || (eng === 'edge'
@@ -83,6 +94,7 @@ export async function speakTextDirect(
     tabId: null,
     voice: chosenVoice,
     rate: Number(rate) || 1,
+    sessionId: sessionId || chatSessionId,
   };
   emit?.(state);
 
