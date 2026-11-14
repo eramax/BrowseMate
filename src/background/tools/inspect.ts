@@ -2,6 +2,7 @@
 import { z } from 'zod';
 import { register } from './registry';
 import { t } from '../../shared/i18n';
+import { resolveTabId } from './tab-id';
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -16,7 +17,9 @@ register({
     tabId: z.number().optional().describe('معرف تبويب خلفي (اختياري)'),
   }),
   execute: async (a, ctx) => {
-    const tab = a.tabId !== undefined ? await chrome.tabs.get(a.tabId) : await ctx.getActiveTab();
+    const tabId = await resolveTabId(a.tabId, ctx);
+    if (tabId == null) return { error: 'NO_ACTIVE_TAB', message: 'لا يوجد تبويب نشط.' };
+    const tab = await chrome.tabs.get(tabId);
     const target = { tabId: tab.id! };
     const c = { console: [] as string[], requests: [] as { url: string; status?: number; type: string }[], scripts: [] as { id: string; url: string }[] };
     try {

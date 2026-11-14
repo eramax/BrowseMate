@@ -38,6 +38,22 @@ export type PanelToWorker =
   | { type: 'stop' }
   | { type: 'session-switch'; sessionId: string };
 
+/** حالة مشغّل الصوت داخل البانل (Edge/المتصفح) */
+export interface TtsPanelState {
+  active: boolean;
+  playing: boolean;
+  engine: 'edge' | 'browser';
+  title: string;
+  text: string;
+  index: number;
+  total: number;
+  currentTime: number;
+  duration: number;
+  tabId: number | null;
+  voice: string;
+  rate: number;
+}
+
 export type WorkerToPanel =
   | { type: 'chat-started'; runId: string; sessionId: string }
   | { type: 'delta'; runId: string; text: string }
@@ -49,7 +65,8 @@ export type WorkerToPanel =
   | { type: 'done'; runId: string }
   | { type: 'error'; runId?: string; message: string; code?: string }
   | { type: 'sessions-list'; sessions: Array<Pick<Session, 'id' | 'title' | 'updatedAt'>> }
-  | { type: 'session-data'; session: Session };
+  | { type: 'session-data'; session: Session }
+  | { type: 'tts-state'; state: TtsPanelState };
 
 // ===== أدوات بنمط MCP =====
 /** واجهة تسجيل تشخيصي — تُمرَّر للأدوات عند تفعيل Debug */

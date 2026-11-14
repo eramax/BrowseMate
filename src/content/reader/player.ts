@@ -38,6 +38,12 @@ export class TtsPlayer {
         case 'cancelled':
           this.setState('idle');
           break;
+        case 'paused':
+          this.setState('paused');
+          break;
+        case 'resumed':
+          this.setState('speaking');
+          break;
         case 'error':
           this.setState('idle');
           this.onError?.(msg.error);
@@ -70,7 +76,17 @@ export class TtsPlayer {
     this.onStateChange?.(s);
   }
 
-  speak(text: string, _index: number): void {
+  speak(
+    text: string,
+    _index: number,
+    opts: {
+      key?: string;
+      prefetch?: Array<{ key: string; text: string }>;
+      index?: number;
+      total?: number;
+      title?: string;
+    } = {},
+  ): void {
     const seq = ++this.speakSeq;
     const payload = {
       type: 'tts-speak',
@@ -78,6 +94,11 @@ export class TtsPlayer {
       rate: this.settings.rate,
       engine: this.settings.engine,
       ...(this.settings.voice ? { voice: this.settings.voice } : {}),
+      ...(opts.key ? { key: opts.key } : {}),
+      ...(opts.prefetch?.length ? { prefetch: opts.prefetch } : {}),
+      ...(opts.index != null ? { index: opts.index } : {}),
+      ...(opts.total != null ? { total: opts.total } : {}),
+      ...(opts.title ? { title: opts.title } : {}),
     };
     try {
       chrome.runtime.sendMessage(payload, (res: any) => {
@@ -114,6 +135,13 @@ export class TtsPlayer {
     this.speakSeq++;
     this.actualEngine = null;
     try { chrome.runtime.sendMessage({ type: 'tts-stop' }); } catch { /* ignore */ }
+    this.setState('idle');
+  }
+
+  /** إيقاف محلي بدون إرسال tts-stop (للانتقال بين الفقرات) */
+  silence(): void {
+    this.speakSeq++;
+    this.actualEngine = null;
     this.setState('idle');
   }
 }

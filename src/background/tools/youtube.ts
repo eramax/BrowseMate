@@ -2,6 +2,7 @@
 import { z } from 'zod';
 import { register } from './registry';
 import { withPage } from '../inject';
+import { resolveTabId } from './tab-id';
 
 /** تعمل في MAIN world: تصل إلى ytInitialPlayerResponse وتجلب الترجمة بجلسة المتصفح الحقيقية */
 async function ytMainExtract() {
@@ -62,7 +63,9 @@ register({
   idempotent: true,
   schema: z.object({ tabId: z.number().optional().describe('معرف تبويب خلفي (اختياري)') }),
   execute: async (a, ctx) => {
-    const tab = a.tabId !== undefined ? await chrome.tabs.get(a.tabId) : await ctx.getActiveTab();
+    const tabId = await resolveTabId(a.tabId, ctx);
+    if (tabId == null) return { error: 'NO_ACTIVE_TAB', message: 'لا يوجد تبويب نشط.' };
+    const tab = await chrome.tabs.get(tabId);
     let host = '';
     try { host = new URL(tab.url ?? '').hostname; } catch { /* ignore */ }
     if (!/(^|\.)youtube\.com$/.test(host))

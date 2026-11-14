@@ -1,14 +1,16 @@
 <script lang="ts">
   // الشات: مبدّل الجلسات مدمج + الرسائل + مؤشر عمل حي + الموافقات + التقدم
-  import type { ChatMessage, ToolCallInfo } from '../../shared/types';
+  import type { ChatMessage, ToolCallInfo, TtsPanelState } from '../../shared/types';
   import type { Lang } from '../../shared/i18n';
   import Message from './Message.svelte';
+  import VoiceMessage from './VoiceMessage.svelte';
 
   let {
     messages, liveText, livePlan, toolCalls, busy, approvals, progress, lang,
     sessions, currentId, settingsError, stalled,
     send, stop, approve, retry, openSettings,
     openSession, createSession, removeSession,
+    ttsState, ttsPlay, ttsPause, ttsStop, ttsSeek, ttsReplay, ttsPrev, ttsNext,
   }: {
     messages: ChatMessage[];
     liveText: string;
@@ -30,6 +32,14 @@
     openSession: (id: string) => void;
     createSession: () => void;
     removeSession: (id: string) => void;
+    ttsState: TtsPanelState | null;
+    ttsPlay: () => void;
+    ttsPause: () => void;
+    ttsStop: () => void;
+    ttsSeek: (time: number) => void;
+    ttsReplay: () => void;
+    ttsPrev: () => void;
+    ttsNext: () => void;
   } = $props();
 
   let text = $state('');
@@ -78,7 +88,7 @@
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submit(); }
   }
   $effect(() => {
-    void messages.length + liveText.length + toolCalls.length;
+    void messages.length + liveText.length + toolCalls.length + (ttsState?.active ? 1 : 0);
     requestAnimationFrame(() => scroller?.scrollTo({ top: scroller.scrollHeight }));
   });
 </script>
@@ -155,6 +165,26 @@
             <button class="suggestion" onclick={() => send(s)}>{s}</button>
           {/each}
         </div>
+      </div>
+    {/if}
+
+    {#if ttsState?.active}
+      <div class="msg assistant voice-msg" dir={lang === 'ar' ? 'rtl' : 'ltr'}>
+        <div class="who"><span class="logo">B</span> BrowseMate</div>
+        <VoiceMessage
+          player={ttsState}
+          {lang}
+          onPlay={() => {
+            const ended = ttsState.duration > 0 && ttsState.currentTime >= ttsState.duration - 0.25;
+            if (!ended && ttsState.currentTime > 0.2) ttsPlay();
+            else ttsReplay();
+          }}
+          onPause={ttsPause}
+          onStop={ttsStop}
+          onSeek={ttsSeek}
+          onPrev={ttsPrev}
+          onNext={ttsNext}
+        />
       </div>
     {/if}
   </div>

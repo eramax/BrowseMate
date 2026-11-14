@@ -234,6 +234,8 @@ export async function edgeSpeak(
   voice: string | undefined,
   rate: number | undefined,
   tabId: number | null,
+  key = '',
+  prefetch: Array<{ key: string; text: string }> = [],
 ): Promise<{ ok: boolean; error?: string }> {
   const previousTabId = edgeActiveTabId;
   const epoch = edgeEpoch;
@@ -246,6 +248,8 @@ export async function edgeSpeak(
     voice: voice || '',
     rate: rate ?? 1,
     tabId,
+    key,
+    prefetch,
   });
   if (epoch !== edgeEpoch) return { ok: false, error: 'EDGE_STOPPED' };
   if (!res?.ok) {
@@ -274,6 +278,10 @@ export function edgePause(): void {
 
 export function edgeResume(): void {
   void sendOffscreen({ type: 'edge-resume' });
+}
+
+export function edgeSeek(time: number): void {
+  void sendOffscreen({ type: 'edge-seek', time });
 }
 
 export async function edgeState(): Promise<{ open: boolean; playing: boolean } | null> {

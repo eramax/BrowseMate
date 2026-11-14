@@ -2,6 +2,7 @@
 import { z } from 'zod';
 import { register } from './registry';
 import { withReader } from '../inject';
+import { resolveTabId } from './tab-id';
 import { getTtsVoices } from '../tts';
 import { fetchEdgeVoices, type EdgeVoice } from '../edge';
 
@@ -18,7 +19,7 @@ register({
     ids: z.array(z.string()).max(50).optional().describe('معرّفات لجلب نصها الكامل بدل القائمة'),
   }),
   execute: async (a, ctx) => {
-    const tabId = a.tabId ?? (await ctx.getActiveTab()).id;
+    const tabId = await resolveTabId(a.tabId, ctx);
     if (tabId == null) return { error: 'NO_ACTIVE_TAB', message: 'لا يوجد تبويب نشط.' };
     return withReader(tabId, 'outline', { offset: a.offset, maxBlocks: a.maxBlocks, ids: a.ids });
   },
@@ -27,7 +28,7 @@ register({
 register({
   name: 'read_aloud',
   description:
-    'يقرأ بصوت عالٍ الأجزاء التي يختارها الوكيل داخل الصفحة نفسها (أزرار تحكم عائمة + تمييز الفقرة والكلمة). اختر هدفاً واحداً فقط: blockIds من page_outline، أو fromBlockId/toBlockId، أو selector، أو selection، أو text. لا تقرأ الصفحة كلها افتراضياً؛ اختر المحتوى الرئيسي فقط. يستخدم أصوات Microsoft Edge العصبية افتراضياً (engine:edge) وهي الأفضل والأكثر طبيعية، مع أصوات المتصفح كاحتياط.',
+    'يقرأ بصوت عالٍ الأجزاء التي يختارها الوكيل. text يُقرأ مباشرة في مشغل البانل بدون فتح صفحة (لا تظليل)؛ أما blockIds/from-to/selector/selection فتعمل داخل الصفحة مع أزرار عائمة وتظليل الفقرة والكلمة. اختر هدفاً واحداً فقط. لا تقرأ الصفحة كلها افتراضياً؛ اختر المحتوى الرئيسي. يستخدم أصوات Microsoft Edge العصبية افتراضياً، مع أصوات المتصفح كاحتياط.',
   sensitive: false,
   idempotent: true,
   schema: z.object({
@@ -37,7 +38,7 @@ register({
     toBlockId: z.string().optional().describe('انتهِ عند هذه الفقرة (شاملة)'),
     selector: z.string().max(300).optional().describe('محدد CSS لعناصر تُقرأ، مثل article p'),
     selection: z.boolean().optional().describe('اقرأ الفقرات المتقاطعة مع التحديد الحالي'),
-    text: z.string().min(1).max(20000).optional().describe('نص حر للقراءة بدون تظليل'),
+    text: z.string().min(1).max(20000).optional().describe('نص حر يُقرأ مباشرة كرسالة صوتية في المحادثة بدون فتح صفحة وبدون تظليل'),
     rate: z.number().min(0.5).max(2).optional().describe('سرعة القراءة (0.5–2، افتراضي 1)'),
     engine: z.enum(['edge', 'browser']).optional().describe('edge = أصوات Microsoft Edge العصبية (افتراضي)، browser = أصوات chrome.tts'),
     voice: z.string().max(200).optional().describe('اسم صوت من list_tts_voices (مثل ar-EG-ShakirNeural)'),
@@ -62,9 +63,6 @@ register({
         message: 'اختر هدفاً واحداً فقط: blockIds أو نطاق أو selector أو selection أو text.',
       };
     }
-    const tabId = a.tabId ?? (await ctx.getActiveTab()).id;
-    if (tabId == null) return { error: 'NO_ACTIVE_TAB', message: 'لا يوجد تبويب نشط.' };
-
     const engine: 'edge' | 'browser' = a.engine === 'browser' ? 'browser' : 'edge';
 
     if (engine === 'edge') {
@@ -107,6 +105,41 @@ register({
       }
     }
 
+    // نص حر: يُقرأ مباشرة في مشغل البانل بدون فتح صفحة
+    const isTextOnly =
+      Boolean(a.text?.trim()) &&
+      !a.blockIds?.length &&
+      !a.fromBlockId &&
+      !a.toBlockId &&
+      !a.selector?.trim() &&
+      a.selection !== true;
+    if (isTextOnly) {
+      const text = String(a.text || '');
+      const res: any = await chrome.runtime.sendMessage({
+        type: 'tts-speak-text',
+        text,
+        voice: a.voice,
+        rate: a.rate,
+        engine,
+      });
+      if (res?.ok) {
+        return {
+          ok: true,
+          data: {
+            count: 1,
+            total: 1,
+            engine: res.engine || engine,
+            voice: a.voice || '',
+            rate: a.rate ?? 1,
+            first: text.slice(0, 120),
+          },
+        };
+      }
+      return res;
+    }
+
+    const tabId = await resolveTabId(a.tabId, ctx);
+    if (tabId == null) return { error: 'NO_ACTIVE_TAB', message: 'لا يوجد تبويب نشط.' };
     const { tabId: _omit, ...payload } = a;
     return withReader(tabId, 'read', { ...payload, engine });
   },
@@ -131,7 +164,7 @@ register({
     const modes = [Boolean(a.text?.trim()), Boolean(a.blockIds?.length), Boolean(a.selector?.trim())].filter(Boolean).length;
     if (modes === 0) return { error: 'NO_TARGET', message: 'حدد text أو blockIds أو selector.' };
     if (modes > 1) return { error: 'MULTIPLE_TARGETS', message: 'اختر هدفاً واحداً فقط: text أو blockIds أو selector.' };
-    const tabId = a.tabId ?? (await ctx.getActiveTab()).id;
+    const tabId = await resolveTabId(a.tabId, ctx);
     if (tabId == null) return { error: 'NO_ACTIVE_TAB', message: 'لا يوجد تبويب نشط.' };
     const { tabId: _omit, ...payload } = a;
     return withReader(tabId, 'highlight', payload);
@@ -145,7 +178,7 @@ register({
   idempotent: true,
   schema: z.object({ tabId: z.number().optional() }),
   execute: async (a, ctx) => {
-    const tabId = a.tabId ?? (await ctx.getActiveTab()).id;
+    const tabId = await resolveTabId(a.tabId, ctx);
     if (tabId == null) return { error: 'NO_ACTIVE_TAB', message: 'لا يوجد تبويب نشط.' };
     return withReader(tabId, 'clear-highlights');
   },
@@ -158,7 +191,7 @@ register({
   idempotent: true,
   schema: z.object({ tabId: z.number().optional() }),
   execute: async (a, ctx) => {
-    const tabId = a.tabId ?? (await ctx.getActiveTab()).id;
+    const tabId = await resolveTabId(a.tabId, ctx);
     if (tabId == null) return { error: 'NO_ACTIVE_TAB', message: 'لا يوجد تبويب نشط.' };
     return withReader(tabId, 'stop');
   },
@@ -171,7 +204,7 @@ register({
   idempotent: true,
   schema: z.object({ tabId: z.number().optional() }),
   execute: async (a, ctx) => {
-    const tabId = a.tabId ?? (await ctx.getActiveTab()).id;
+    const tabId = await resolveTabId(a.tabId, ctx);
     if (tabId == null) return { error: 'NO_ACTIVE_TAB', message: 'لا يوجد تبويب نشط.' };
     return withReader(tabId, 'status');
   },

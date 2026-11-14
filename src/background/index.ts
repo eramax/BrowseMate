@@ -9,14 +9,14 @@ import { getArtifact } from './artifacts';
 import { debugStore, logSystemDebug } from './debug';
 import { chromeKV } from '../shared/storage';
 import { getTtsVoices, ttsPause, ttsResume, ttsSpeak, ttsStop } from './tts';
-import { edgePause, edgeResume, edgeSpeak, edgeStop, fetchEdgeVoices } from './edge';
+import { edgePause, edgeResume, edgeSeek, edgeSpeak, edgeStop, fetchEdgeVoices } from './edge';
 import { validateSkill, buildSkillFromToolCalls } from './skills';
 import {
   getSkills, getOrderedSkills, saveSkill as storeSkill, deleteSkill as storeDeleteSkill,
   setOrder as storeSetOrder, saveSkillsBulk, syncNow, syncStatus, pullSkills,
 } from './skill-store';
 import { setLang } from '../shared/i18n';
-import type { PanelToWorker, WorkerToPanel, SkillFile } from '../shared/types';
+import type { PanelToWorker, WorkerToPanel, SkillFile, TtsPanelState } from '../shared/types';
 import './tools/page';
 import './tools/tabs';
 import './tools/misc';
@@ -49,6 +49,53 @@ self.addEventListener('unhandledrejection', (e) => {
 
 let port: chrome.runtime.Port | undefined;
 let activeSessionId = '';
+
+const EMPTY_TTS_STATE: TtsPanelState = {
+  active: false,
+  playing: false,
+  engine: 'edge',
+  title: '',
+  text: '',
+  index: 0,
+  total: 1,
+  currentTime: 0,
+  duration: 0,
+  tabId: null,
+  voice: '',
+  rate: 1,
+};
+let ttsState: TtsPanelState = { ...EMPTY_TTS_STATE };
+
+function emitTtsState() {
+  port?.postMessage({ type: 'tts-state', state: ttsState });
+}
+function setTtsState(patch: Partial<TtsPanelState>) {
+  ttsState = { ...ttsState, ...patch };
+  emitTtsState();
+}
+function resetTtsState() {
+  ttsState = { ...EMPTY_TTS_STATE };
+  emitTtsState();
+}
+
+/** أحداث مشغل Edge (تعمل حتى بدون تبويب عند قراءة نص حر) */
+function handleEdgeEvent(msg: any) {
+  const e = msg?.event;
+  if (!e) return;
+  const type = e.type;
+  if (type === 'start') {
+    setTtsState({ playing: true, ...(Number.isFinite(Number(e.duration)) ? { duration: Number(e.duration) } : {}) });
+  } else if (type === 'progress') {
+    setTtsState({ currentTime: Number(e.currentTime) || 0, duration: Number(e.duration) || 0 });
+  } else if (type === 'end' || type === 'error' || type === 'interrupted' || type === 'cancelled') {
+    setTtsState({ playing: false });
+  } else if (type === 'paused') {
+    setTtsState({ playing: false });
+  } else if (type === 'resumed') {
+    setTtsState({ playing: true });
+  }
+  if (msg.tabId != null) chrome.tabs.sendMessage(msg.tabId, e).catch(() => {});
+}
 
 chrome.runtime.onInstalled.addListener(() => {
   chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch(console.error);
@@ -92,14 +139,55 @@ function emit(sessionId: string, evt: WorkerToPanel) {
   port?.postMessage({ ...evt, sessionId });
 }
 
+/** قراءة نص حر في مشغل البانل بدون الحاجة لصفحة أو content script */
+async function speakTextDirect(
+  text: string,
+  voice: string | undefined,
+  rate: number | undefined,
+  engine: 'edge' | 'browser' | undefined,
+): Promise<any> {
+  const eng: 'edge' | 'browser' = engine === 'browser' ? 'browser' : 'edge';
+  ttsState = {
+    active: true,
+    playing: true,
+    engine: eng,
+    title: '',
+    text,
+    index: 0,
+    total: 1,
+    currentTime: 0,
+    duration: 0,
+    tabId: null,
+    voice: String(voice || ''),
+    rate: Number(rate) || 1,
+  };
+  emitTtsState();
+  if (eng === 'edge') {
+    ttsStop();
+    const r = await edgeSpeak(text, voice, rate, null);
+    if (r.ok) return { ok: true, engine: 'edge' };
+    if (r.error === 'EDGE_STOPPED') {
+      resetTtsState();
+      return { ok: false, error: 'EDGE_STOPPED' };
+    }
+    const b = ttsSpeak(text, rate, undefined, null);
+    if (!b.ok) resetTtsState();
+    else setTtsState({ engine: 'browser' });
+    return { ...b, engine: 'browser', fallback: true, edgeError: r.error };
+  }
+  edgeStop();
+  const b = ttsSpeak(text, rate, voice, null);
+  if (!b.ok) resetTtsState();
+  else setTtsState({ engine: 'browser' });
+  return { ...b, engine: 'browser' };
+}
+
 // ===== RPC بسيط للطلبات غير المتدفقة (إعدادات/جلسات/مهارات) =====
 chrome.runtime.onMessage.addListener((msg: any, sender, send) => {
   // رسائل الـ offscreen لها target خاص — لا يعالجها الـ SW
   if (msg?.target === 'offscreen') return;
   if (msg?.target === 'sw') {
-    if (msg.type === 'edge-event' && msg.tabId != null && msg.event) {
-      chrome.tabs.sendMessage(msg.tabId, msg.event).catch(() => {});
-    }
+    if (msg.type === 'edge-event') handleEdgeEvent(msg);
     send({ ok: true });
     return true;
   }
@@ -121,41 +209,122 @@ chrome.runtime.onMessage.addListener((msg: any, sender, send) => {
         case 'tts-speak': {
           const tabId = sender.tab?.id ?? null;
           const requested = msg.engine === 'browser' ? 'browser' : 'edge';
+          ttsState = {
+            active: true,
+            playing: true,
+            engine: requested,
+            title: String(msg.title || ''),
+            text: String(msg.text || ''),
+            index: Number.isFinite(Number(msg.index)) ? Number(msg.index) : 0,
+            total: Number.isFinite(Number(msg.total)) ? Number(msg.total) : 1,
+            currentTime: 0,
+            duration: 0,
+            tabId,
+            voice: String(msg.voice || ''),
+            rate: Number(msg.rate) || 1,
+          };
+          emitTtsState();
+
           if (requested === 'edge') {
             ttsStop();
-            const r = await edgeSpeak(msg.text, msg.voice, msg.rate, tabId);
+            const r = await edgeSpeak(
+              msg.text,
+              msg.voice,
+              msg.rate,
+              tabId,
+              String(msg.key || ''),
+              Array.isArray(msg.prefetch) ? msg.prefetch : [],
+            );
             if (r.ok) {
               send({ ok: true, engine: 'edge' });
               break;
             }
             // المستخدم أوقف القراءة أثناء التركيب — لا تبدأ صوتاً بديلاً
             if (r.error === 'EDGE_STOPPED') {
+              resetTtsState();
               send({ ok: false, error: 'EDGE_STOPPED' });
               break;
             }
             // احتياط: صوت المتصفح الافتراضي
             const b = ttsSpeak(msg.text, msg.rate, undefined, tabId);
+            if (!b.ok) resetTtsState();
+            else setTtsState({ engine: 'browser' });
             send({ ...b, engine: 'browser', fallback: true, edgeError: r.error });
             break;
           }
           edgeStop();
           const r = ttsSpeak(msg.text, msg.rate, msg.voice, tabId);
+          if (!r.ok) resetTtsState();
+          else setTtsState({ engine: 'browser' });
           send({ ...r, engine: 'browser' });
           break;
         }
-        case 'tts-pause':
+        case 'tts-speak-text':
+          send(await speakTextDirect(String(msg.text || ''), msg.voice, msg.rate, msg.engine));
+          break;
+        case 'tts-replay': {
+          if (ttsState.tabId != null) {
+            chrome.tabs.sendMessage(ttsState.tabId, { __ta: 'reader', op: 'replay' }).catch(() => {});
+            send({ ok: true });
+            break;
+          }
+          if (!ttsState.text) {
+            send({ ok: false, error: 'NO_REPLAY' });
+            break;
+          }
+          send(await speakTextDirect(ttsState.text, ttsState.voice, ttsState.rate, ttsState.engine));
+          break;
+        }
+        case 'tts-pause': {
+          const tabId = ttsState.tabId;
           ttsPause();
           edgePause();
+          setTtsState({ playing: false });
+          if (tabId != null) chrome.tabs.sendMessage(tabId, { action: 'tts-event', type: 'paused' }).catch(() => {});
           send({ ok: true });
           break;
-        case 'tts-resume':
+        }
+        case 'tts-resume': {
+          const tabId = ttsState.tabId;
           ttsResume();
           edgeResume();
+          setTtsState({ playing: true });
+          if (tabId != null) chrome.tabs.sendMessage(tabId, { action: 'tts-event', type: 'resumed' }).catch(() => {});
           send({ ok: true });
           break;
-        case 'tts-stop':
+        }
+        case 'tts-stop': {
+          const fromPanel = sender.tab?.id == null;
+          const tabId = ttsState.tabId;
           ttsStop();
           edgeStop();
+          if (fromPanel && tabId != null) {
+            chrome.tabs.sendMessage(tabId, { __ta: 'reader', op: 'remote-stop' }).catch(() => {});
+          }
+          resetTtsState();
+          send({ ok: true });
+          break;
+        }
+        case 'tts-status':
+          send({ ok: true, state: ttsState });
+          break;
+        case 'tts-seek': {
+          const time = Number(msg.time) || 0;
+          setTtsState({ currentTime: time });
+          edgeSeek(time);
+          send({ ok: true });
+          break;
+        }
+        case 'tts-next':
+          if (ttsState.tabId != null) {
+            chrome.tabs.sendMessage(ttsState.tabId, { __ta: 'reader', op: 'next' }).catch(() => {});
+          }
+          send({ ok: true });
+          break;
+        case 'tts-prev':
+          if (ttsState.tabId != null) {
+            chrome.tabs.sendMessage(ttsState.tabId, { __ta: 'reader', op: 'prev' }).catch(() => {});
+          }
           send({ ok: true });
           break;
         case 'tts-voices': {

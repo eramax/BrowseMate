@@ -50,8 +50,8 @@ function notify(message: string): void {
   try { console.info('[BrowseMate Reader]', message); } catch { /* ignore */ }
 }
 
-function stopReading(): void {
-  player.stop();
+function stopReading(notify = true): void {
+  if (notify) player.stop(); else player.silence();
   highlighter.clearAll();
   overlay.setPlaying(false);
   overlay.hide();
@@ -75,7 +75,21 @@ function readParagraph(index: number): void {
     highlighter.clearAll();
   }
   overlay.setParaInfo(index, blocks.length);
-  player.speak(block.text, index);
+
+  const settings = player.getSettings();
+  const keyOf = (b: ReaderBlock) => `${b.id}|${settings.engine}|${settings.voice}|${settings.rate}`;
+  const key = keyOf(block);
+  const prefetch = blocks
+    .slice(index + 1, index + 3)
+    .filter((b) => b.text?.trim())
+    .map((b) => ({ key: keyOf(b), text: b.text }));
+  player.speak(block.text, index, {
+    key,
+    prefetch,
+    index,
+    total: blocks.length,
+    title: document.title,
+  });
 }
 
 function startReading(
@@ -237,13 +251,13 @@ overlay.setCallbacks({
   onPlay: togglePlayPause,
   onPause: togglePlayPause,
   onStop: stopReading,
-  onPrev: () => { if (currentPara > 0) { player.stop(); readParagraph(currentPara - 1); } },
-  onNext: () => { if (currentPara < blocks.length - 1) { player.stop(); readParagraph(currentPara + 1); } },
+  onPrev: () => { if (currentPara > 0) { player.silence(); readParagraph(currentPara - 1); } },
+  onNext: () => { if (currentPara < blocks.length - 1) { player.silence(); readParagraph(currentPara + 1); } },
   onSpeedChange: (rate) => {
     player.setSettings({ rate });
     try { chrome.storage.local.set({ rate }); } catch { /* ignore */ }
     if (isActive && player.getState() !== 'idle') {
-      player.stop();
+      player.silence();
       readParagraph(currentPara);
     }
   },
@@ -296,6 +310,35 @@ chrome.runtime.onMessage.addListener((msg: any, _sender, send) => {
 
       case 'stop':
         stopReading();
+        send({ ok: true });
+        return true;
+
+      case 'remote-stop':
+        stopReading(false);
+        send({ ok: true });
+        return true;
+
+      case 'replay':
+        if (isActive) {
+          player.silence();
+          readParagraph(currentPara);
+        }
+        send({ ok: true });
+        return true;
+
+      case 'next':
+        if (isActive && currentPara < blocks.length - 1) {
+          player.silence();
+          readParagraph(currentPara + 1);
+        }
+        send({ ok: true });
+        return true;
+
+      case 'prev':
+        if (isActive && currentPara > 0) {
+          player.silence();
+          readParagraph(currentPara - 1);
+        }
         send({ ok: true });
         return true;
 

@@ -2,7 +2,7 @@
   // BrowseMate — App: يملك Port والأحداث والجلسات؛ العرض في مكوّنات
   import { openPanelPort, rpc } from './lib/port';
   import { setLang as setI18nLang, type Lang } from '../shared/i18n';
-  import type { ChatMessage, Session, ToolCallInfo, SkillFile } from '../shared/types';
+  import type { ChatMessage, Session, ToolCallInfo, SkillFile, TtsPanelState } from '../shared/types';
   import ChatView from './components/ChatView.svelte';
   import SkillList from './components/SkillList.svelte';
   import SettingsView from './components/SettingsView.svelte';
@@ -26,6 +26,7 @@
   let stalled = $state(false);
   let lastUserText = $state('');
   let lastSkill = $state<{ name: string; params: Record<string, string> } | undefined>();
+  let ttsState = $state<TtsPanelState | null>(null);
   let ackTimer: ReturnType<typeof setTimeout> | undefined;
   let watchdog: ReturnType<typeof setInterval> | undefined;
 
@@ -78,6 +79,9 @@
       case 'approval-request':
         approvals = [...approvals, { id: e.id, tool: e.tool, args: e.args, steps: e.steps }];
         break;
+      case 'tts-state':
+        ttsState = e.state;
+        break;
       case 'done':
       case 'error': {
         clearTimeout(ackTimer);
@@ -101,6 +105,8 @@
       const ens: any = await rpc('ensure-session', { title: s.settings?.lang === 'ar' ? 'جلسة جديدة' : 'New chat' });
       sessionId = ens.id;
       await Promise.all([loadSession(sessionId), refreshSessions()]);
+      const tts: any = await rpc('tts-status').catch(() => null);
+      if (tts?.ok) ttsState = tts.state;
     })();
   });
 
@@ -237,6 +243,14 @@
         sessions={sessionsList} currentId={sessionId} {settingsError} {stalled}
         send={send} stop={stop} approve={approve} retry={retry} openSettings={() => (tab = 'settings')}
         openSession={openSession} createSession={newSession} removeSession={deleteSession}
+        {ttsState}
+        ttsPlay={() => rpc('tts-resume')}
+        ttsPause={() => rpc('tts-pause')}
+        ttsStop={() => rpc('tts-stop')}
+        ttsSeek={(time) => rpc('tts-seek', { time })}
+        ttsReplay={() => rpc('tts-replay')}
+        ttsPrev={() => rpc('tts-prev')}
+        ttsNext={() => rpc('tts-next')}
       />
     {:else if tab === 'skills'}
       <SkillList {skills} {lang} run={runSkill} remove={deleteSkill} refresh={refreshSkills} />

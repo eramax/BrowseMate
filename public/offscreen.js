@@ -1,6 +1,8 @@
 // محرك Microsoft Edge Read Aloud داخل offscreen document مخفي.
-// يستقبل WS URL من الـ SW (بعد تمويه User-Agent)، يركّب SSML، يجمع MP3 + WordBoundary،
-// يشغّل الصوت ويرسل أحداث الكلمات إلى الـ SW ثم إلى content script.
+// - يستقبل WS URL من الـ SW بعد تمويه UA.
+// - يركّب SSML، يجمع MP3 + WordBoundary، يشغّل الصوت ويرسل أحداث الكلمات.
+// - يسبق تجهيز الفقرتين التاليتين (prefetch) فيخزّنهما ويشغّلهما فوراً لتقليل التأخير.
+
 (() => {
   'use strict';
 
@@ -8,6 +10,7 @@
   const AUDIO_DELIM = new TextEncoder().encode('Path:audio\r\n');
   const DEFAULT_AR = 'ar-EG-ShakirNeural';
   const DEFAULT_EN = 'en-US-EmmaMultilingualNeural';
+  const CACHE_MAX = 8;
 
   /** @type {WebSocket|null} */
   let ws = null;
@@ -21,10 +24,16 @@
   let lastWordIndex = -1;
   let currentTabId = null;
   let currentText = '';
-  /** @type {null | {requestId:string,text:string,voice:string,rate:number,tabId:number|null,chunks:Uint8Array[],metadata:any[],resolve:(v:any)=>void,timeout:any}} */
+  let currentKey = '';
+  /** @type {null | {requestId:string,text:string,voice:string,rate:number,tabId:number|null,chunks:Uint8Array[],metadata:any[],resolve:(v:any)=>void,timeout:any,prefetch:boolean,key:string}} */
   let pending = null;
-  /** @type {null | {text:string,voice:string,rate:number,tabId:number|null,resolve:(v:any)=>void}} */
+  /** طلب تشغيل رئيسي ينتظر انتهاء التركيب الحالي */
+  /** @type {null | {text:string,voice:string,rate:number,tabId:number|null,key:string,prefetch:any[],resolve:(v:any)=>void}} */
   let nextRequest = null;
+  /** @type {{key:string,text:string,voice:string,rate:number,tabId:number|null}[]} */
+  let prefetchQueue = [];
+  /** @type {Map<string,{url:string,boundaries:any[],text:string,voice:string,rate:number}>} */
+  const cache = new Map();
 
   function log(...args) {
     try { console.log(TAG, ...args); } catch {}
@@ -39,6 +48,47 @@
     });
   }
 
+  // ===== cache =====
+  function cacheGet(key) {
+    return key ? cache.get(key) || null : null;
+  }
+
+  function cacheSet(key, entry) {
+    if (!key) return;
+    const old = cache.get(key);
+    if (old && old.url !== entry.url) {
+      try { URL.revokeObjectURL(old.url); } catch {}
+    }
+    cache.set(key, entry);
+    if (cache.size > CACHE_MAX) {
+      for (const [k, v] of cache) {
+        if (cache.size <= CACHE_MAX) break;
+        if (k === currentKey || k === key) continue;
+        cache.delete(k);
+        try { URL.revokeObjectURL(v.url); } catch {}
+      }
+    }
+  }
+
+  function clearCache() {
+    for (const v of cache.values()) {
+      try { URL.revokeObjectURL(v.url); } catch {}
+    }
+    cache.clear();
+  }
+
+  function clearPrefetch() {
+    prefetchQueue = [];
+  }
+
+  function failQueued(error) {
+    if (!nextRequest) return;
+    const n = nextRequest;
+    nextRequest = null;
+    try { n.resolve({ ok: false, error }); } catch {}
+  }
+
+  // ===== audio/timer =====
   function ensureAudio() {
     if (audio) return audio;
     audio = new Audio();
@@ -47,11 +97,7 @@
     audio.addEventListener('ended', () => {
       stopTimer();
       sendEvent('end');
-      if (nextRequest) {
-        const n = nextRequest;
-        nextRequest = null;
-        setTimeout(() => startRequest(n), 200);
-      }
+      maybeStartNext();
     });
     audio.addEventListener('error', () => {
       stopTimer();
@@ -69,7 +115,7 @@
   }
 
   function sendEvent(type, extra) {
-    if (currentTabId == null) return;
+    // tabId قد يكون null عند قراءة نص حر من البانل بدون صفحة
     sendMessage({
       target: 'sw',
       type: 'edge-event',
@@ -82,13 +128,6 @@
     sendEvent('word', { charIndex: b.charIndex, length: b.length, word: b.word });
   }
 
-  function failQueued(error) {
-    if (!nextRequest) return;
-    const n = nextRequest;
-    nextRequest = null;
-    try { n.resolve({ ok: false, error }); } catch {}
-  }
-
   function stopTimer() {
     if (timer) {
       clearInterval(timer);
@@ -99,6 +138,7 @@
   function startTimer() {
     stopTimer();
     lastWordIndex = -1;
+    let lastProgressAt = 0;
     timer = setInterval(() => {
       if (!audio || audio.paused) return;
       const t = audio.currentTime;
@@ -110,6 +150,10 @@
       if (idx !== lastWordIndex) {
         lastWordIndex = idx;
         if (idx >= 0) sendWord(boundaries[idx]);
+      }
+      if (Date.now() - lastProgressAt > 250) {
+        lastProgressAt = Date.now();
+        sendEvent('progress', { currentTime: t, duration: audio.duration || 0 });
       }
     }, 60);
   }
@@ -126,8 +170,10 @@
     }
     boundaries = [];
     lastWordIndex = -1;
+    currentKey = '';
   }
 
+  // ===== SSML =====
   function escapeXml(s) {
     return String(s)
       .replace(/&/g, '&amp;')
@@ -163,6 +209,7 @@
     );
   }
 
+  // ===== message parsing =====
   function findNeedle(bytes, needle) {
     outer: for (let i = 0; i <= bytes.length - needle.length; i++) {
       for (let j = 0; j < needle.length; j++) {
@@ -224,8 +271,13 @@
     pending.timeout = setTimeout(() => {
       const p = pending;
       pending = null;
-      try { p.resolve({ ok: false, error: 'EDGE_TIMEOUT' }); } catch {}
-      failQueued('EDGE_TIMEOUT');
+      if (p.prefetch) {
+        log('prefetch timeout');
+      } else {
+        try { p.resolve({ ok: false, error: 'EDGE_TIMEOUT' }); } catch {}
+        failQueued('EDGE_TIMEOUT');
+      }
+      runPrefetch();
     }, 25000);
   }
 
@@ -253,67 +305,79 @@
     return out;
   }
 
-  function finalize() {
-    if (!pending) return;
-    const req = pending;
-    pending = null;
-    clearTimeout(req.timeout);
-    if (!req.chunks.length) {
-      try { req.resolve({ ok: false, error: 'EDGE_NO_AUDIO' }); } catch {}
-      failQueued('EDGE_NO_AUDIO');
-      return;
-    }
-
-    const total = req.chunks.reduce((n, c) => n + c.length, 0);
+  function mergedAudio(chunks) {
+    const total = chunks.reduce((n, c) => n + c.length, 0);
     const merged = new Uint8Array(total);
     let offset = 0;
-    for (const c of req.chunks) {
+    for (const c of chunks) {
       merged.set(c, offset);
       offset += c.length;
     }
+    return merged;
+  }
 
-    const blob = new Blob([merged], { type: 'audio/mpeg' });
-    if (blobUrl) { try { URL.revokeObjectURL(blobUrl); } catch {} }
-    blobUrl = URL.createObjectURL(blob);
-    boundaries = buildBoundaries(req.text, req.metadata);
-    currentText = req.text;
+  // ===== play/cache =====
+  function buildPrefetchQueue(list, voice, rate, tabId, mainKey) {
+    const seen = new Set();
+    prefetchQueue = (Array.isArray(list) ? list : [])
+      .filter((j) => j && j.key && j.text && j.key !== mainKey && !cache.has(j.key) && !seen.has(j.key) && seen.add(j.key))
+      .map((j) => ({ key: String(j.key), text: String(j.text), voice, rate, tabId }));
+  }
+
+  function maybeStartNext() {
+    if (!nextRequest || pending) return;
+    if (audio && !audio.paused) return;
+    const n = nextRequest;
+    nextRequest = null;
+    startMain(n);
+  }
+
+  function playEntry(req, entry, owned) {
+    resetAudio();
+    currentKey = req.key;
+    currentText = entry.text;
     currentTabId = req.tabId;
-
+    boundaries = entry.boundaries;
+    if (owned) blobUrl = entry.url;
     const player = ensureAudio();
-    player.src = blobUrl;
+    player.src = entry.url;
     player.playbackRate = 1;
     player
       .play()
       .then(() => {
-        sendEvent('start');
+        sendEvent('start', { duration: player.duration || 0 });
         startTimer();
-        try { req.resolve({ ok: true, bytes: blob.size, words: boundaries.length, voice: req.voice || '' }); } catch {}
+        try { req.resolve({ ok: true, bytes: entry.bytes || 0, words: boundaries.length, voice: req.voice || '', cached: !owned }); } catch {}
+        runPrefetch();
       })
       .catch((e) => {
         stopTimer();
         try { req.resolve({ ok: false, error: 'EDGE_PLAY_FAILED: ' + (e && e.message ? e.message : e) }); } catch {}
-        failQueued('EDGE_PLAY_FAILED');
         sendEvent('error', { error: 'EDGE_PLAY_FAILED' });
+        clearPrefetch();
       });
   }
 
-  function startRequest(req) {
+  // ===== synthesis =====
+  function sendSynthesis(job) {
     if (!ws || ws.readyState !== WebSocket.OPEN) {
-      try { req.resolve({ ok: false, error: 'EDGE_NO_WS' }); } catch {}
+      if (job.prefetch) return;
+      try { job.resolve({ ok: false, error: 'EDGE_NO_WS' }); } catch {}
       failQueued('EDGE_NO_WS');
       return;
     }
-    resetAudio();
     pending = {
       requestId: uuid(),
-      text: req.text,
-      voice: req.voice,
-      rate: req.rate,
-      tabId: req.tabId,
+      text: job.text,
+      voice: job.voice,
+      rate: job.rate,
+      tabId: job.tabId,
       chunks: [],
       metadata: [],
-      resolve: req.resolve,
+      resolve: job.resolve,
       timeout: null,
+      prefetch: Boolean(job.prefetch),
+      key: job.key || '',
     };
     resetTimeout();
     try {
@@ -324,27 +388,94 @@
           'Content-Type:application/ssml+xml\r\n' +
           `X-Timestamp:${new Date().toUTCString()}\r\n` +
           'Path:ssml\r\n\r\n' +
-          buildSSML(req.text, req.voice, req.rate),
+          buildSSML(job.text, job.voice, job.rate),
       );
-      log('synth', rid, req.text.slice(0, 50));
+      log(job.prefetch ? 'prefetch' : 'synth', rid, job.text.slice(0, 45));
     } catch (e) {
       const p = pending;
       pending = null;
-      try { p.resolve({ ok: false, error: 'EDGE_SEND_FAILED: ' + (e && e.message ? e.message : e) }); } catch {}
-      failQueued('EDGE_SEND_FAILED');
+      if (p.prefetch) {
+        log('prefetch send failed', e);
+      } else {
+        try { p.resolve({ ok: false, error: 'EDGE_SEND_FAILED: ' + (e && e.message ? e.message : e) }); } catch {}
+        failQueued('EDGE_SEND_FAILED');
+      }
     }
   }
 
+  function startMain(req) {
+    buildPrefetchQueue(req.prefetch, req.voice, req.rate, req.tabId, req.key);
+    sendSynthesis({ ...req, prefetch: false });
+  }
+
+  function runPrefetch() {
+    if (pending || !ws || ws.readyState !== WebSocket.OPEN) return;
+    while (prefetchQueue.length && cache.has(prefetchQueue[0].key)) prefetchQueue.shift();
+    const job = prefetchQueue.shift();
+    if (!job) return;
+    sendSynthesis({ ...job, prefetch: true, resolve: () => {} });
+  }
+
+  function finalize() {
+    if (!pending) return;
+    const req = pending;
+    pending = null;
+    clearTimeout(req.timeout);
+
+    if (!req.chunks.length) {
+      if (req.prefetch) {
+        log('prefetch empty');
+        runPrefetch();
+      } else {
+        try { req.resolve({ ok: false, error: 'EDGE_NO_AUDIO' }); } catch {}
+        failQueued('EDGE_NO_AUDIO');
+        clearPrefetch();
+      }
+      return;
+    }
+
+    const merged = mergedAudio(req.chunks);
+    const blob = new Blob([merged], { type: 'audio/mpeg' });
+    const url = URL.createObjectURL(blob);
+    const bounds = buildBoundaries(req.text, req.metadata);
+
+    if (req.prefetch) {
+      cacheSet(req.key, { url, boundaries: bounds, text: req.text, voice: req.voice, rate: req.rate });
+      log('prefetched', req.key.slice(0, 40), 'words', bounds.length);
+      maybeStartNext();
+      runPrefetch();
+      return;
+    }
+
+    playEntry(
+      req,
+      { url, boundaries: bounds, text: req.text, bytes: blob.size },
+      true,
+    );
+  }
+
+  // ===== public ops =====
   function speak(msg, sendResponse) {
     const req = {
       text: String(msg.text || ''),
       voice: String(msg.voice || ''),
       rate: Number(msg.rate) || 1,
       tabId: msg.tabId == null ? null : Number(msg.tabId),
+      key: String(msg.key || ''),
+      prefetch: Array.isArray(msg.prefetch) ? msg.prefetch : [],
       resolve: sendResponse,
     };
     if (!req.text.trim()) {
       sendResponse({ ok: false, error: 'EMPTY_TEXT' });
+      return;
+    }
+    const cached = cacheGet(req.key);
+    // إذا كان الجاري prefetch فقط والصوت المطلوب جاهز، شغّله فوراً دون انتظار الـ prefetch
+    if (cached && (!pending || pending.prefetch)) {
+      log('cached play', req.key.slice(0, 40));
+      failQueued('EDGE_REPLACED');
+      buildPrefetchQueue(req.prefetch, req.voice, req.rate, req.tabId, req.key);
+      playEntry(req, cached, false);
       return;
     }
     if (pending) {
@@ -352,9 +483,14 @@
       nextRequest = req;
       return;
     }
-    // طلب أحدث يتفوق على أي طلب كان في الانتظار
     failQueued('EDGE_REPLACED');
-    startRequest(req);
+    if (cached) {
+      log('cached play', req.key.slice(0, 40));
+      buildPrefetchQueue(req.prefetch, req.voice, req.rate, req.tabId, req.key);
+      playEntry(req, cached, false);
+      return;
+    }
+    startMain(req);
   }
 
   function connect(msg, sendResponse) {
@@ -397,9 +533,12 @@
         const p = pending;
         pending = null;
         clearTimeout(p.timeout);
-        try { p.resolve({ ok: false, error: 'EDGE_WS_ERROR' }); } catch {}
+        if (!p.prefetch) {
+          try { p.resolve({ ok: false, error: 'EDGE_WS_ERROR' }); } catch {}
+        }
       }
       failQueued('EDGE_WS_ERROR');
+      clearPrefetch();
     };
     socket.onclose = () => {
       ws = null;
@@ -412,21 +551,28 @@
         const p = pending;
         pending = null;
         clearTimeout(p.timeout);
-        try { p.resolve({ ok: false, error: 'EDGE_WS_CLOSED' }); } catch {}
+        if (!p.prefetch) {
+          try { p.resolve({ ok: false, error: 'EDGE_WS_CLOSED' }); } catch {}
+        }
       }
       failQueued('EDGE_WS_CLOSED');
+      clearPrefetch();
     };
   }
 
   function stopAudio() {
     failQueued('EDGE_STOPPED');
+    clearPrefetch();
     if (pending) {
       const p = pending;
       pending = null;
       clearTimeout(p.timeout);
-      try { p.resolve({ ok: false, error: 'EDGE_STOPPED' }); } catch {}
+      if (!p.prefetch) {
+        try { p.resolve({ ok: false, error: 'EDGE_STOPPED' }); } catch {}
+      }
     }
     resetAudio();
+    clearCache();
     // أغلق الاتصال لإنهاء أي turn جارٍ قبل قراءة جديدة (يمنع تداخل SSML)
     if (ws) {
       try {
@@ -454,6 +600,8 @@
           open: Boolean(ws && ws.readyState === WebSocket.OPEN),
           playing: Boolean(audio && !audio.paused),
           words: boundaries.length,
+          cached: cache.size,
+          prefetch: prefetchQueue.length,
         });
         return true;
       case 'edge-stop':
@@ -467,6 +615,18 @@
       case 'edge-resume':
         if (audio) {
           audio.play().then(() => startTimer()).catch(() => {});
+        }
+        sendResponse({ ok: true });
+        return true;
+      case 'edge-seek':
+        if (audio) {
+          const raw = Number(msg.time);
+          const max = Number.isFinite(audio.duration) ? audio.duration : 0;
+          const t = Math.max(0, Math.min(Number.isFinite(raw) ? raw : 0, max || 0));
+          try { audio.currentTime = t; } catch {}
+          lastWordIndex = -1;
+          sendEvent('progress', { currentTime: audio.currentTime || t, duration: max });
+          if (!audio.paused) startTimer();
         }
         sendResponse({ ok: true });
         return true;

@@ -32,7 +32,7 @@ register({
   sensitive: true,
   schema: z.object({ url: z.string().url(), tabId: z.number().optional() }),
   execute: async (a, ctx) => {
-    const tab = a.tabId !== undefined ? await chrome.tabs.get(a.tabId) : await ctx.getActiveTab();
+    const tab = a.tabId && a.tabId > 0 ? await chrome.tabs.get(a.tabId) : await ctx.getActiveTab();
     // المستمع قبل التنقل حتى لا تفوتنا صفحة تُحمّل فوراً
     await new Promise<void>((resolve) => {
       const timer = setTimeout(finish, 15000);
@@ -64,7 +64,11 @@ register({
   description: 'يغلق تبويبًا بمعرفه (من list_tabs).',
   sensitive: true,
   schema: z.object({ tabId: z.number() }),
-  execute: async (a) => { await chrome.tabs.remove(a.tabId); return { closed: a.tabId }; },
+  execute: async (a) => {
+    if (!a.tabId || a.tabId <= 0) return { error: 'BAD_TAB_ID', message: 'tabId غير صالح.' };
+    await chrome.tabs.remove(a.tabId);
+    return { closed: a.tabId };
+  },
 });
 
 const GROUP_COLORS = ['grey', 'blue', 'red', 'yellow', 'green', 'pink', 'purple', 'cyan', 'orange'] as const;

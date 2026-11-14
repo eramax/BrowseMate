@@ -2,6 +2,7 @@
 import { z } from 'zod';
 import { register } from './registry';
 import { withPage } from '../inject';
+import { resolveTabId } from './tab-id';
 
 register({
   name: 'read_page',
@@ -10,7 +11,11 @@ register({
   sensitive: false,
   idempotent: true,
   schema: z.object({ tabId: z.number().optional().describe('معرف تبويب خلفي (اختياري)') }),
-  execute: async (a, ctx) => withPage(a.tabId ?? (await ctx.getActiveTab()).id!, 'read'),
+  execute: async (a, ctx) => {
+    const tabId = await resolveTabId(a.tabId, ctx);
+    if (tabId == null) return { error: 'NO_ACTIVE_TAB', message: 'لا يوجد تبويب نشط.' };
+    return withPage(tabId, 'read');
+  },
 });
 
 register({
@@ -19,7 +24,11 @@ register({
   sensitive: false,
   idempotent: true,
   schema: z.object({ tabId: z.number().optional().describe('معرف تبويب خلفي (اختياري)') }),
-  execute: async (a, ctx) => withPage(a.tabId ?? (await ctx.getActiveTab()).id!, 'read'),
+  execute: async (a, ctx) => {
+    const tabId = await resolveTabId(a.tabId, ctx);
+    if (tabId == null) return { error: 'NO_ACTIVE_TAB', message: 'لا يوجد تبويب نشط.' };
+    return withPage(tabId, 'read');
+  },
 });
 
 register({
@@ -30,7 +39,11 @@ register({
     tabId: z.number().optional().describe('معرف تبويب خلفي (اختياري)'),
     values: z.array(z.object({ id: z.string(), value: z.string() })).min(1),
   }),
-  execute: async (a, ctx) => withPage(a.tabId ?? (await ctx.getActiveTab()).id!, 'fill', { values: a.values }),
+  execute: async (a, ctx) => {
+    const tabId = await resolveTabId(a.tabId, ctx);
+    if (tabId == null) return { error: 'NO_ACTIVE_TAB', message: 'لا يوجد تبويب نشط.' };
+    return withPage(tabId, 'fill', { values: a.values });
+  },
 });
 
 register({
@@ -42,5 +55,9 @@ register({
     id: z.string().optional(),
     label: z.string().optional(),
   }),
-  execute: async (a, ctx) => withPage(a.tabId ?? (await ctx.getActiveTab()).id!, 'click', { id: a.id, label: a.label }),
+  execute: async (a, ctx) => {
+    const tabId = await resolveTabId(a.tabId, ctx);
+    if (tabId == null) return { error: 'NO_ACTIVE_TAB', message: 'لا يوجد تبويب نشط.' };
+    return withPage(tabId, 'click', { id: a.id, label: a.label });
+  },
 });
