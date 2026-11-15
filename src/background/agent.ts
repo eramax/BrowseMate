@@ -15,7 +15,14 @@ export interface AgentDeps {
   emit: (sessionId: string, evt: WorkerToPanel) => void;
   getActiveTab: () => Promise<chrome.tabs.Tab>;
   approvals: {
-    request: (tool: string, args: unknown, steps?: string[], notify?: (i: { id: string; tool: string; args: unknown; steps?: string[] }) => void) => Promise<boolean>;
+    request: (
+      tool: string,
+      args: unknown,
+      steps?: string[],
+      notify?: (i: { id: string; tool: string; args: unknown; steps?: string[] }) => void,
+      meta?: { sessionId?: string; runId?: string; timeoutMs?: number },
+    ) => Promise<boolean>;
+    rejectRun?: (runId: string) => void;
   };
   runs: Map<string, RunHandle>;
 }
@@ -54,6 +61,7 @@ export async function runChat(
   sessionId: string,
   userText: string,
   skill?: { name: string; params: Record<string, string> },
+  targetTabId?: number,
 ) {
   const runId = crypto.randomUUID();
   let debugRef: DebugLogger | undefined;
@@ -88,7 +96,9 @@ export async function runChat(
   try {
     const session = await deps.sessions.get(sessionId);
     if (!session) throw new Error('session not found');
-    const tab = await deps.getActiveTab();
+    const tab = targetTabId
+      ? await chrome.tabs.get(targetTabId).catch(() => deps.getActiveTab())
+      : await deps.getActiveTab();
     deps.emit(sessionId, { type: 'chat-started', runId, sessionId });
 
     // رسالة المستخدم تُحفظ أولاً — تظهر في الجلسة حتى لو فشل الاتصال/الإعدادات
@@ -174,6 +184,7 @@ export async function runChat(
       getActiveTab: deps.getActiveTab,
       sessionId,
       runId,
+      defaultTabId: tab?.id ?? null,
       emit: (e) => deps.emit(sessionId, e),
       signal: ac.signal,
       approvalMode,
@@ -187,7 +198,7 @@ export async function runChat(
         dbg.log('approval:request', { tool, args, steps });
         return deps.approvals
           .request(tool, args, steps, (info) =>
-            deps.emit(sessionId, { type: 'approval-request', id: info.id, tool: info.tool, args: info.args, steps: info.steps }))
+            deps.emit(sessionId, { type: 'approval-request', id: info.id, tool: info.tool, args: info.args, steps: info.steps }), { sessionId, runId })
           .then((ok) => {
             dbg.log('approval:result', { tool, approved: ok }, ok ? 'info' : 'warn');
             return ok;
@@ -249,8 +260,9 @@ export async function runChat(
         persist();
       } else if (type === 'tool-call') {
         dbg.log('stream:tool-call', { name: (part as any).toolName, input: (part as any).input }, 'debug');
-        toolLog.push({ name: (part as any).toolName, args: (part as any).input, status: 'running' });
-        deps.emit(sessionId, { type: 'tool-start', runId, info: { name: (part as any).toolName, args: (part as any).input, status: 'running' } });
+        const callId = String((part as any).toolCallId || `call-${toolLog.length}-${Date.now()}`);
+        toolLog.push({ id: callId, name: (part as any).toolName, args: (part as any).input, status: 'running' });
+        deps.emit(sessionId, { type: 'tool-start', runId, info: { id: callId, name: (part as any).toolName, args: (part as any).input, status: 'running' } });
         persist(true);
       } else if (type === 'tool-result') {
         const out: any = (part as any).output;
@@ -267,7 +279,10 @@ export async function runChat(
           if (i >= 0) artifacts[i] = out.artifact;
           else artifacts.push(out.artifact);
         }
-        const entry = toolLog.find((t) => t.name === (part as any).toolName && t.status === 'running');
+        const resultCallId = String((part as any).toolCallId || '');
+        const entry = resultCallId
+          ? toolLog.find((t) => t.id === resultCallId)
+          : toolLog.find((t) => t.name === (part as any).toolName && t.status === 'running');
         const status: ToolCallInfo['status'] =
           out?.error === 'REFUSED_BY_USER' ? 'refused' : out?.error ? 'error' : 'ok';
         if (entry) {
@@ -276,7 +291,7 @@ export async function runChat(
         }
         deps.emit(sessionId, {
           type: 'tool-end', runId,
-          info: { name: (part as any).toolName, args: (part as any).input, status },
+          info: { id: entry?.id || resultCallId || undefined, name: (part as any).toolName, args: (part as any).input, status },
         });
         persist(true);
       } else if (type === 'error') {
@@ -344,6 +359,7 @@ export async function runChat(
     clearTimeout(persistTimer);
     clearInterval(keepAlive);
     await debugRef?.flush().catch(() => {});
+    deps.approvals.rejectRun?.(runId);
     deps.runs.delete(runId);
   }
 }
@@ -389,8 +405,11 @@ function safeStringify(v: unknown): string {
 }
 
 /** رسائل النموذج + سجل الأدوات — بدونه لا يعرف النموذج ما نُفّذ في الأدوار السابقة */
-function toModelMessages(history: ChatMessage[]) {
-  return history.map((m) => {
+const MAX_CONTEXT_CHARS = 60_000;
+const MAX_MESSAGE_CHARS = 24_000;
+
+export function toModelMessages(history: ChatMessage[]) {
+  const mapped = history.map((m) => {
     let content = m.content?.trim() ? m.content : ' ';
     if (m.role === 'assistant' && m.toolCalls?.length) {
       const lines = m.toolCalls
@@ -399,8 +418,21 @@ function toModelMessages(history: ChatMessage[]) {
         .join('\n');
       content += `\n\n[سجل الأدوات المنفذة في هذا الرد]\n${lines}`;
     }
-    return { role: (m.role === 'system' ? 'user' : m.role) as 'user' | 'assistant', content };
+    return { role: (m.role === 'system' ? 'user' : m.role) as 'user' | 'assistant', content: content.slice(0, MAX_MESSAGE_CHARS) };
   });
+  // ابدأ من الأحدث: لا نرسل تاريخاً أطول من ميزانية النموذج
+  const kept: typeof mapped = [];
+  let total = 0;
+  for (let i = mapped.length - 1; i >= 0; i--) {
+    const m = mapped[i];
+    if (kept.length && total + m.content.length > MAX_CONTEXT_CHARS) break;
+    kept.unshift(m);
+    total += m.content.length;
+  }
+  if (kept.length < mapped.length) {
+    kept.unshift({ role: 'user', content: '[تم اختصار جزء من المحادثة السابقة لتوفير مساحة السياق]' });
+  }
+  return kept;
 }
 
 export function friendlyError(e: any): { message: string; code?: string } {

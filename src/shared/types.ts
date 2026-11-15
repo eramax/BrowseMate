@@ -23,6 +23,8 @@ export interface ChatMessage {
 }
 
 export interface ToolCallInfo {
+  /** معرف استدعاء الأداة من النموذج — يميز الاستدعاءات المتوازية */
+  id?: string;
   name: string;
   args: unknown;
   status: 'running' | 'ok' | 'error' | 'refused';
@@ -42,6 +44,8 @@ export type PanelToWorker =
       type: 'chat';
       sessionId: string;
       text: string;
+      /** التبويب النشط لحظة إرسال الرسالة — تبقى الأدوات عليه حتى لو تغيّر التركيز */
+      tabId?: number;
       /** مهارة محددة من واجهة التشغيل — تسمح بتخطي list_skills */
       skill?: { name: string; params: Record<string, string> };
     }
@@ -106,6 +110,8 @@ export interface ToolContext {
   sessionId: string;
   /** معرّف التشغيل الحالي (اختياري للتشخيص) */
   runId?: string;
+  /** التبويب الذي بدأ عليه التشغيل — تبقى الأدوات عليه حتى لو غيّر المستخدم التبويب */
+  defaultTabId?: number | null;
   /** وضع الصلاحيات: sensitive = اسأل عن الحساس فقط، always = اسأل دائمًا، never = بدون سؤال */
   approvalMode: ApprovalMode;
   /** أدوات التشغيل الحالي — تتيح للنموذج تحويل ما نُفذ فعلاً إلى مهارة */

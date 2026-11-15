@@ -37,3 +37,29 @@ describe('sessions store', () => {
     expect((await s.get(a.id))!.messages).toHaveLength(1);
   });
 });
+
+describe('sessions concurrency', () => {
+  it('does not lose concurrent appends', async () => {
+    const s = createSessionStore(memKV());
+    const sess = await s.create('concurrent');
+    await Promise.all(
+      Array.from({ length: 80 }, (_, i) =>
+        s.append(sess.id, { id: `m${i}`, role: 'user', content: `msg-${i}`, ts: i }),
+      ),
+    );
+    const after = await s.get(sess.id);
+    expect(after!.messages).toHaveLength(80);
+    expect(after!.messages.map((m) => m.id).sort()).toEqual(
+      Array.from({ length: 80 }, (_, i) => `m${i}`).sort(),
+    );
+  });
+
+  it('returns clones so callers cannot mutate stored history', async () => {
+    const s = createSessionStore(memKV());
+    const sess = await s.create('clone');
+    await s.append(sess.id, { id: 'm1', role: 'user', content: 'hi', ts: 1 });
+    const a = await s.get(sess.id);
+    a!.messages.push({ id: 'evil', role: 'user', content: 'x', ts: 2 });
+    expect((await s.get(sess.id))!.messages).toHaveLength(1);
+  });
+});

@@ -48,6 +48,8 @@
   let text = $state('');
   let scroller = $state<HTMLElement>();
   let menuOpen = $state(false);
+  let showAll = $state(false);
+  const RENDER_LIMIT = 80;
 
   const L = $derived(lang === 'ar' ? {
     placeholder: 'اطلب أي شيء… مثل: لخص هذه الصفحة',
@@ -58,6 +60,7 @@
     openSettings: 'فتح الإعدادات', noSessions: 'لا جلسات', newSession: 'جلسة جديدة',
     stalled: 'توقف التنفيذ قبل الاكتمال (انقطاع الخدمة) — يمكنك إعادة المحاولة',
     queued: 'سيُرسل بعد انتهاء الرد الحالي',
+    showEarlier: 'عرض الرسائل الأقدم',
   } : {
     placeholder: 'Ask anything… e.g. summarize this page',
     stop: 'Stop', retry: 'Retry', plan: 'Declared plan',
@@ -84,11 +87,16 @@
   const runningTool = $derived(toolCalls.find((c) => c.status === 'running')?.name);
   // صوت مرتبط بهذه الجلسة فقط — لا يظهر مشغل جلسة أخرى
   const sessionTts = $derived(ttsState && ttsState.sessionId === currentId ? ttsState : null);
+  // لا نرسم مئات الرسائل دفعة واحدة؛ نعرض الأحدث مع زر لإظهار الكل
+  const visibleMessages = $derived(
+    !showAll && messages.length > RENDER_LIMIT ? messages.slice(-RENDER_LIMIT) : messages,
+  );
+  const hiddenCount = $derived(messages.length - visibleMessages.length);
 
   // الرسالة الصوتية المحفوظة المطابقة للصوت الحالي (لتشغيلها كمشغل واحد)
   const activeHistoryVoiceId = $derived.by(() => {
     if (!sessionTts?.active) return '';
-    const rev = [...messages].reverse();
+    const rev = [...visibleMessages].reverse();
     // المسار الدقيق: نفس معرّف الرسالة الصوتية عبر كل فقرات القراءة
     if (sessionTts.voiceId) {
       for (const m of rev) {
@@ -205,7 +213,12 @@
   {/if}
 
   <div class="msgs" bind:this={scroller}>
-    {#each messages as m (m.id)}
+    {#if hiddenCount > 0}
+      <button class="mini show-earlier" onclick={() => (showAll = true)}>
+        {lang === 'ar' ? `عرض ${hiddenCount} رسالة أقدم` : `Show ${hiddenCount} older messages`}
+      </button>
+    {/if}
+    {#each visibleMessages as m (m.id)}
       <Message msg={m} {lang}>
         {#if m.voices?.length}
           <div class="voice-stack">

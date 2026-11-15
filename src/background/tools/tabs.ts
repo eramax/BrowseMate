@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { register } from './registry';
 import { isGroupableUrl } from '../intent';
 import { planGroups } from '../tab-grouping';
+import { resolveTabId } from './tab-id';
 
 register({
   name: 'list_tabs',
@@ -32,7 +33,9 @@ register({
   sensitive: true,
   schema: z.object({ url: z.string().url(), tabId: z.number().optional() }),
   execute: async (a, ctx) => {
-    const tab = a.tabId && a.tabId > 0 ? await chrome.tabs.get(a.tabId) : await ctx.getActiveTab();
+    const targetId = await resolveTabId(a.tabId, ctx);
+    if (targetId == null) return { error: 'NO_ACTIVE_TAB', message: 'لا يوجد تبويب نشط.' };
+    const tab = await chrome.tabs.get(targetId);
     // المستمع قبل التنقل حتى لا تفوتنا صفحة تُحمّل فوراً
     await new Promise<void>((resolve) => {
       const timer = setTimeout(finish, 15000);

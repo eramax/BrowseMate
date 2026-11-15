@@ -37,6 +37,10 @@
     try { enginePort?.postMessage(msg); } catch {}
   }
 
+  function engineLog(event, data) {
+    postToSw({ type: 'edge-log', event, data });
+  }
+
   function connectEnginePort() {
     try {
       enginePort = chrome.runtime.connect({ name: 'tts-engine' });
@@ -715,6 +719,7 @@
     };
     socket.onerror = () => {
       if (ws !== socket) return;
+      engineLog('ws-error', { online: typeof navigator !== 'undefined' ? navigator.onLine : null });
       if (!settled) {
         settled = true;
         clearTimeout(timer);
@@ -722,15 +727,21 @@
       }
       resetSocket('EDGE_WS_ERROR');
     };
-    socket.onclose = () => {
+    socket.onclose = (e) => {
       if (ws !== socket) return;
       ws = null;
+      engineLog('ws-close', {
+        code: Number(e?.code) || 0,
+        reason: String(e?.reason || '').slice(0, 200),
+        online: typeof navigator !== 'undefined' ? navigator.onLine : null,
+      });
+      const err = `EDGE_WS_CLOSED:${Number(e?.code) || 0}`;
       if (!settled) {
         settled = true;
         clearTimeout(timer);
-        sendResponse({ ok: false, error: 'EDGE_WS_CLOSED' });
+        sendResponse({ ok: false, error: err });
       }
-      resetSocket('EDGE_WS_CLOSED');
+      resetSocket(err);
     };
   }
 

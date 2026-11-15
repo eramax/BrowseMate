@@ -20,32 +20,45 @@ export interface WorkspaceStore {
 }
 
 export function createWorkspaceStore(kv: KV): WorkspaceStore {
+  // كل كتابات مساحة العمل متسلسلة — لا تفقد كتابة ملفات أخرى أثناء read-modify-write
+  let writeChain: Promise<unknown> = Promise.resolve();
+  function locked<T>(fn: () => Promise<T>): Promise<T> {
+    const run = writeChain.then(fn, fn);
+    writeChain = run.then(() => undefined, () => undefined);
+    return run;
+  }
   const getFiles = async (): Promise<Files> => (await kv.get<Files>(FILES_KEY)) ?? {};
 
   const writeFile = async (path: string, content: string) => {
-    const files = await getFiles();
-    files[safePath(path)] = String(content ?? '');
-    await kv.set(FILES_KEY, files);
+    await locked(async () => {
+      const files = await getFiles();
+      files[safePath(path)] = String(content ?? '');
+      await kv.set(FILES_KEY, files);
+    });
   };
 
   const appendFile = async (path: string, content: string) => {
-    const files = await getFiles();
-    const p = safePath(path);
-    files[p] = (files[p] ?? '') + String(content ?? '');
-    await kv.set(FILES_KEY, files);
+    await locked(async () => {
+      const files = await getFiles();
+      const p = safePath(path);
+      files[p] = (files[p] ?? '') + String(content ?? '');
+      await kv.set(FILES_KEY, files);
+    });
   };
 
   const readFile = async (path: string) => (await getFiles())[safePath(path)];
 
   const deleteFile = async (path: string) => {
-    const files = await getFiles();
-    const p = safePath(path);
-    delete files[p];
-    await kv.set(FILES_KEY, files);
-    if ((await getEntry()) === p) {
-      const next = Object.keys(files).sort()[0];
-      await kv.set(ENTRY_KEY, next ?? 'index.html');
-    }
+    await locked(async () => {
+      const files = await getFiles();
+      const p = safePath(path);
+      delete files[p];
+      await kv.set(FILES_KEY, files);
+      if ((await getEntry()) === p) {
+        const next = Object.keys(files).sort()[0];
+        await kv.set(ENTRY_KEY, next ?? 'index.html');
+      }
+    });
   };
 
   const listFiles = async () => {
@@ -56,13 +69,15 @@ export function createWorkspaceStore(kv: KV): WorkspaceStore {
   };
 
   const reset = async () => {
-    await kv.set(FILES_KEY, {});
-    await kv.set(ENTRY_KEY, 'index.html');
+    await locked(async () => {
+      await kv.set(FILES_KEY, {});
+      await kv.set(ENTRY_KEY, 'index.html');
+    });
   };
 
   const getEntry = async () => (await kv.get<string>(ENTRY_KEY)) ?? 'index.html';
   const setEntry = async (path: string) => {
-    await kv.set(ENTRY_KEY, safePath(path));
+    await locked(async () => { await kv.set(ENTRY_KEY, safePath(path)); });
   };
 
   return { getFiles, writeFile, appendFile, readFile, deleteFile, listFiles, reset, getEntry, setEntry };

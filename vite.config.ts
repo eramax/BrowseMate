@@ -5,7 +5,7 @@ import { crx } from '@crxjs/vite-plugin';
 const manifest = {
   manifest_version: 3,
   name: 'BrowseMate',
-  version: '0.4.1',
+  version: '0.5.0',
   side_panel: { default_path: 'src/sidepanel/index.html' },
   background: { service_worker: 'src/background/index.ts', type: 'module' },
   content_scripts: [

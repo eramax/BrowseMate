@@ -50,6 +50,7 @@ import './tools/skillTools';
 const sessions = createSessionStore(chromeKV);
 const approvals = createApprovalManager();
 const runs = new Map<string, RunHandle>();
+void sessions.enforceQuota().catch((e) => console.warn('sessions quota:', e));
 
 self.addEventListener('error', (e) => {
   void logSystemDebug('sw:error', {
@@ -66,6 +67,7 @@ self.addEventListener('unhandledrejection', (e) => {
 
 const ports = new Set<chrome.runtime.Port>();
 let activeSessionId = '';
+const panelSessions = new WeakMap<chrome.runtime.Port, string>();
 let engineHost: chrome.runtime.Port | null = null;
 setTtsEmitter((state) => {
   for (const p of ports) {
@@ -99,6 +101,7 @@ chrome.runtime.onConnect.addListener((p) => {
     engineHost = p;
     p.onMessage.addListener((msg: any) => {
       if (msg?.type === 'edge-event') handleEdgeEvent(msg);
+      else if (msg?.type === 'edge-log') void logSystemDebug(`tts:engine:${msg.event}`, msg.data, 'warn');
       else if (msg?.type === 'engine-ready') void ensureEdgeConnected().catch(() => {});
     });
     p.onDisconnect.addListener(() => {
@@ -112,22 +115,26 @@ chrome.runtime.onConnect.addListener((p) => {
   if (p.name !== 'panel') return;
   pullSkills().then(() => seedSkills()).catch((e) => { console.warn('skills init:', e); void logSystemDebug('skills:init-error', { error: e }); });
   ports.add(p);
-  p.onDisconnect.addListener(() => { ports.delete(p); });
   // مزامنة أولية: البانل قد يُفتح بعد بدء الصوت أو بعد إعادة تشغيل الـ SW
   try { p.postMessage({ type: 'tts-state', state: getTtsState() }); } catch { /* ignore */ }
   p.onMessage.addListener((msg: PanelToWorker) => {
     if (msg.type === 'chat') {
       activeSessionId = msg.sessionId;
+      panelSessions.set(p, msg.sessionId);
       setTtsChatSession(msg.sessionId);
-      runChat({ sessions, emit, getActiveTab, approvals, runs }, msg.sessionId, msg.text, msg.skill)
+      if ([...runs.values()].some((r) => r.sessionId === msg.sessionId)) {
+        try { p.postMessage({ type: 'error', sessionId: msg.sessionId, message: 'يوجد تشغيل جارٍ بالفعل في هذه الجلسة. انتظر انتهاءه أو أوقفه.', code: 'RUN_IN_PROGRESS' }); } catch { /* ignore */ }
+        return;
+      }
+      runChat({ sessions, emit, getActiveTab, approvals, runs }, msg.sessionId, msg.text, msg.skill, msg.tabId)
         .catch((e) => emit(msg.sessionId, { type: 'error', message: String(e) }));
     } else if (msg.type === 'approval-response') {
       approvals.resolve(msg.id, msg.approved);
     } else if (msg.type === 'stop') {
-      approvals.rejectAll(); // لا تترك أداة معلقة على موافقة لن تأتي
-      for (const r of runs.values()) r.ac.abort();
+      const stopFor = msg.sessionId || panelSessions.get(p) || activeSessionId;
+      approvals.rejectSession(stopFor);
+      for (const r of runs.values()) if (r.sessionId === stopFor) r.ac.abort();
       // زر الإيقاف يوقف أيضاً القراءة الصوتية الجارية/المعلّقة لهذه الجلسة
-      const stopFor = msg.sessionId || activeSessionId;
       if (stopFor) void stopTts({ kind: 'session', sessionId: stopFor });
     } else if (msg.type === 'tts-download') {
       // عبر Port وليس sendMessage: التصدير الطويل قد يتجاوز مهلة رسالة الـ RPC
@@ -156,7 +163,18 @@ chrome.runtime.onConnect.addListener((p) => {
         });
     } else if (msg.type === 'session-switch') {
       activeSessionId = msg.sessionId;
+      panelSessions.set(p, msg.sessionId);
       setTtsChatSession(msg.sessionId);
+    }
+  });
+  p.onDisconnect.addListener(() => {
+    ports.delete(p);
+    const sess = panelSessions.get(p);
+    if (!sess) return;
+    approvals.rejectSession(sess);
+    // إن لم يعد هناك بانل يعرض نفس الجلسة، أوقف تشغيلها
+    if (![...ports].some((x) => panelSessions.get(x) === sess)) {
+      for (const r of runs.values()) if (r.sessionId === sess) r.ac.abort();
     }
   });
 });
@@ -394,6 +412,12 @@ chrome.runtime.onMessage.addListener((msg: any, sender, send) => {
 });
 
 async function getActiveTab(): Promise<chrome.tabs.Tab> {
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  return tab;
+  const isWeb = (t: chrome.tabs.Tab) =>
+    Boolean(t.id && t.url && !/^(chrome-extension|chrome|edge|about):/i.test(t.url));
+  const [active] = await chrome.tabs.query({ active: true, currentWindow: true });
+  if (active && isWeb(active)) return active;
+  const tabs = await chrome.tabs.query({ currentWindow: true });
+  return tabs
+    .filter(isWeb)
+    .sort((a, b) => (b.lastAccessed || 0) - (a.lastAccessed || 0))[0] ?? active;
 }

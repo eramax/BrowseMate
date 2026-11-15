@@ -342,3 +342,9 @@ input, textarea, select { font: inherit; }
   border: 0;
   z-index: -1;
 }
+
+.show-earlier {
+  align-self: center;
+  margin: 6px auto 2px;
+  width: fit-content;
+}

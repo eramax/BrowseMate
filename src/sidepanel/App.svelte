@@ -28,8 +28,8 @@
   let lastSkill = $state<{ name: string; params: Record<string, string> } | undefined>();
   let ttsState = $state<TtsPanelState | null>(null);
   const downloadWaiters = new Map<string, (r: any) => void>();
-  let queuedSends = $state<Array<{ text: string; skill?: { name: string; params: Record<string, string> } }>>([]);
-  let queuedText = $state('');
+  let queuedSends = $state<Array<{ text: string; skill?: { name: string; params: Record<string, string> }; sessionId: string; tabId?: number }>>([]);
+  const queuedText = $derived(queuedSends.find((q) => q.sessionId === sessionId)?.text ?? '');
   let ackTimer: ReturnType<typeof setTimeout> | undefined;
   let watchdog: ReturnType<typeof setInterval> | undefined;
 
@@ -86,7 +86,9 @@
         toolCalls = [...toolCalls, { ...e.info }];
         break;
       case 'tool-end': {
-        const i = toolCalls.findIndex((c) => c.name === e.info.name && c.status === 'running');
+        const i = toolCalls.findIndex((c) =>
+          e.info.id ? c.id === e.info.id : c.name === e.info.name && c.status === 'running',
+        );
         if (i >= 0) toolCalls[i] = { ...e.info };
         else toolCalls = [...toolCalls, { ...e.info }];
         break;
@@ -106,7 +108,7 @@
           if (e.code === 'SETTINGS_MISSING') settingsError = true;
           else console.warn('BrowseMate:', e.message);
         }
-        void loadSession(sessionId).finally(() => setTimeout(flushQueue, 30));
+        void loadSession(sessionId).then(() => refreshSessions()).finally(() => setTimeout(flushQueue, 30));
         break;
       }
     }
@@ -156,20 +158,45 @@
   $effect(() => { if (tab === 'skills') refreshSkills(); });
 
   // ===== أوامر الشات =====
-  function send(text: string, skill?: { name: string; params: Record<string, string> }) {
+  async function captureTabId(): Promise<number | undefined> {
+    try {
+      const isWeb = (t: chrome.tabs.Tab) =>
+        Boolean(t.id && t.url && !/^(chrome-extension|chrome|edge|about):/i.test(t.url));
+      const [active] = await chrome.tabs.query({ active: true, currentWindow: true });
+      if (active && isWeb(active)) return active.id;
+      // البانل قد يكون صفحة امتداد نشطة (أو يُفتح كتبويب في الاختبار)
+      const tabs = await chrome.tabs.query({ currentWindow: true });
+      return tabs
+        .filter(isWeb)
+        .sort((a, b) => (b.lastAccessed || 0) - (a.lastAccessed || 0))[0]?.id;
+    } catch {
+      return undefined;
+    }
+  }
+
+  async function send(
+    text: string,
+    skill?: { name: string; params: Record<string, string> },
+    capturedTabId?: number,
+  ) {
+    if (!text.trim()) return;
     if (busy) {
-      if (!text.trim()) return;
-      queuedSends = [...queuedSends, { text, ...(skill ? { skill } : {}) }];
-      queuedText = text;
+      const tabId = capturedTabId ?? await captureTabId();
+      // قد يكون التشغيل انتهى أثناء الاستعلام
+      if (!busy) { void send(text, skill, tabId); return; }
+      queuedSends = [...queuedSends, { text, sessionId, tabId, ...(skill ? { skill } : {}) }];
       return;
     }
+    // احجز الحالة فوراً حتى لا يسبق إرسالٌ ثانٍ إرسالاً أولاً أثناء await
+    busy = true;
+    const tabId = capturedTabId ?? await captureTabId();
     lastUserText = text;
     lastSkill = skill;
     settingsError = false; stalled = false;
     // عرض فوري لرسالتك قبل أي اتصال (optimistic) — SW يحفظها أيضاً قبل الـ LLM
     messages = [...messages, { id: crypto.randomUUID(), role: 'user', content: text, ts: Date.now() }];
-    busy = true; liveText = ''; livePlan = []; toolCalls = [];
-    port.send({ type: 'chat', sessionId, text, ...(skill ? { skill } : {}) });
+    liveText = ''; livePlan = []; toolCalls = [];
+    port.send({ type: 'chat', sessionId, text, ...(tabId != null ? { tabId } : {}), ...(skill ? { skill } : {}) });
     clearTimeout(ackTimer);
     ackTimer = setTimeout(() => {
       if (busy && !liveText && !toolCalls.length) {
@@ -181,11 +208,12 @@
     startWatchdog();
   }
   function flushQueue(): void {
-    if (busy || !queuedSends.length) return;
-    const [next, ...rest] = queuedSends;
-    queuedSends = rest;
-    queuedText = rest[0]?.text ?? '';
-    send(next.text, next.skill);
+    if (busy) return;
+    const i = queuedSends.findIndex((q) => q.sessionId === sessionId);
+    if (i < 0) return;
+    const next = queuedSends[i];
+    queuedSends = queuedSends.filter((_, j) => j !== i);
+    void send(next.text, next.skill, next.tabId);
   }
 
   function stop() { port.send({ type: 'stop', sessionId }); }
@@ -211,7 +239,7 @@
     approvals = approvals.filter((a) => a.id !== id);
     port.send({ type: 'approval-response', id, approved: ok });
   }
-  function retry() { if (lastUserText) send(lastUserText, lastSkill); }
+  function retry() { if (lastUserText) void send(lastUserText, lastSkill); }
 
   // ===== استشعار انقطاع التشغيل (SW قُتل / انقطع البث) =====
   function startWatchdog() {
@@ -242,6 +270,7 @@
     tab = 'chat';
     await loadSession(id);
     await refreshSessions();
+    flushQueue();
   }
   async function newSession() {
     const res: any = await rpc('new-session', { title: lang === 'ar' ? 'جلسة جديدة' : 'New chat' });
