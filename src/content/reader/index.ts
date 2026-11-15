@@ -6,6 +6,7 @@ import type { ReaderBlock } from './extractor';
 import { ReaderHighlighter } from './range-highlighter';
 import { ReaderOverlay } from './overlay';
 import { TtsPlayer } from './player';
+import type { SpeakResult } from './player';
 import { clearPageHighlights, highlightInPage } from './pointer';
 
 const highlighter = new ReaderHighlighter();
@@ -16,10 +17,13 @@ let blocks: ReaderBlock[] = [];
 let currentPara = 0;
 let isActive = false;
 let ready = false;
+let readSeq = 0;
 let edgeVoiceAr = '';
 let edgeVoiceEn = '';
 let edgeVoiceOther = '';
 let browserVoice = '';
+let readerSession = '';
+let readerVoiceId = '';
 const DEFAULT_EDGE_AR = 'ar-EG-ShakirNeural';
 const DEFAULT_EDGE_EN = 'en-US-EmmaMultilingualNeural';
 const DEFAULT_EDGE_OTHER = 'en-US-EmmaMultilingualNeural';
@@ -50,16 +54,8 @@ function notify(message: string): void {
   try { console.info('[BrowseMate Reader]', message); } catch { /* ignore */ }
 }
 
-/** يوقف الصوت الحالي ثم ينفّذ fn — لتطبيق السرعة الجديدة فوراً */
-function cancelAudioThen(fn: () => void): void {
-  try {
-    chrome.runtime.sendMessage({ type: 'tts-cancel-audio' }, () => fn());
-  } catch {
-    fn();
-  }
-}
-
 function stopReading(notify = true): void {
+  readSeq++;
   if (notify) player.stop(); else player.silence();
   highlighter.clearAll();
   overlay.setPlaying(false);
@@ -67,16 +63,18 @@ function stopReading(notify = true): void {
   isActive = false;
   blocks = [];
   currentPara = 0;
+  readerSession = '';
+  readerVoiceId = '';
 }
 
-function readParagraph(index: number): void {
+async function readParagraph(index: number): Promise<SpeakResult> {
   if (!isActive || index < 0 || index >= blocks.length) {
     stopReading();
-    return;
+    return { ok: false, error: 'NOT_ACTIVE' };
   }
   currentPara = index;
   const block = blocks[index];
-  if (!block) { stopReading(); return; }
+  if (!block) { stopReading(); return { ok: false, error: 'NO_BLOCK' }; }
   highlighter.clearWord();
   if (block.element?.isConnected) {
     highlighter.highlightParagraph(block.element, block.text);
@@ -92,19 +90,21 @@ function readParagraph(index: number): void {
     .slice(index + 1, index + 3)
     .filter((b) => b.text?.trim())
     .map((b) => ({ key: keyOf(b), text: b.text }));
-  player.speak(block.text, index, {
+  return player.speak(block.text, index, {
     key,
     prefetch,
     index,
     total: blocks.length,
     title: document.title,
+    sessionId: readerSession,
+    voiceId: readerVoiceId,
   });
 }
 
-function startReading(
+async function startReading(
   items: ReaderBlock[],
-  options: { rate?: number; voice?: string; engine?: 'edge' | 'browser' } = {},
-): {
+  options: { rate?: number; voice?: string; engine?: 'edge' | 'browser'; sessionId?: string; voiceId?: string } = {},
+): Promise<{
   count: number;
   total: number;
   first: string;
@@ -112,15 +112,23 @@ function startReading(
   rate: number;
   engine: 'edge' | 'browser';
   text: string;
-} {
+  error?: string;
+  voiceId?: string;
+  fallback?: boolean;
+  edgeError?: string;
+}> {
   const usable = items.filter((b) => Boolean(b.text?.trim()));
-  if (!usable.length) return { count: 0, total: 0, first: '', voice: '', rate: 1, engine: 'edge', text: '' };
+  if (!usable.length) return { count: 0, total: 0, first: '', voice: '', rate: 1, engine: 'edge', text: '', error: 'NO_BLOCKS' };
 
-  player.stop();
+  const myRead = ++readSeq;
+  // لا نرسل tts-stop هنا: بدء التشغيل الجديد في الـ SW يوقف الصوت السابق فوراً.
+  player.silence();
   highlighter.clearAll();
   blocks = usable;
   currentPara = 0;
   isActive = true;
+  readerSession = String(options.sessionId || '');
+  readerVoiceId = String(options.voiceId || '') || (globalThis.crypto?.randomUUID?.() || `voice-${Date.now()}-${Math.random().toString(16).slice(2)}`);
 
   if (options.rate != null) {
     player.setSettings({ rate: options.rate });
@@ -161,15 +169,47 @@ function startReading(
   overlay.show();
   overlay.setPlaying(true);
   overlay.setParaInfo(0, blocks.length);
-  readParagraph(0);
+  const first = await readParagraph(0);
+  // قراءة جديدة أو إيقاف أثناء انتظار أول فقرة: لا تُرجع نجاحاً كاذباً
+  if (myRead !== readSeq) {
+    return {
+      count: 0,
+      total: 0,
+      first: '',
+      voice: player.getSettings().voice,
+      rate: player.getSettings().rate,
+      engine: player.getSettings().engine,
+      text: '',
+      error: 'SUPERSEDED',
+      voiceId: readerVoiceId,
+    };
+  }
+  const supersededByNext = !first.ok && first.error === 'SUPERSEDED' && isActive;
+  if (!first.ok && !supersededByNext) {
+    const settings = player.getSettings();
+    stopReading(false);
+    return {
+      count: 0,
+      total: 0,
+      first: '',
+      voice: settings.voice,
+      rate: settings.rate,
+      engine: settings.engine,
+      text: '',
+      error: first.error || 'TTS_START_FAILED',
+      voiceId: readerVoiceId,
+    };
+  }
   return {
     count: blocks.length,
     total: blocks.length,
     first: blocks[0].text.slice(0, 120),
-    voice: player.getSettings().voice,
+    voice: first.voice ?? player.getSettings().voice,
     rate: player.getSettings().rate,
-    engine: player.getSettings().engine,
+    engine: first.engine ?? player.getSettings().engine,
     text: usable.map((b) => b.text).join('\n\n').slice(0, 12000),
+    voiceId: first.voiceId || readerVoiceId,
+    ...(first.fallback ? { fallback: true, edgeError: first.edgeError } : {}),
   };
 }
 
@@ -202,17 +242,11 @@ function loadSettings(): void {
         wordColor: '#00bcd4',
       },
       (data) => {
-        const prevRate = player.getSettings().rate;
+        const before = player.getSettings();
         const rate = Number(data?.rate);
         if (Number.isFinite(rate) && rate >= 0.5 && rate <= 2) {
           player.setSettings({ rate });
           overlay.setSpeed(rate);
-          if (isActive && rate !== prevRate) {
-            cancelAudioThen(() => {
-              player.silence();
-              readParagraph(currentPara);
-            });
-          }
         }
         const legacy = typeof data?.voice === 'string' ? data.voice : '';
         // العربية: Shakir افتراضياً حتى لو كان هناك صوت قديم محفوظ
@@ -230,13 +264,21 @@ function loadSettings(): void {
           : legacy && !/Neural$/i.test(legacy) ? legacy : '';
         const engine = data?.engine === 'browser' ? 'browser' : 'edge';
         player.setSettings({ engine });
-        if (!isActive) {
-          if (engine === 'edge') {
-            const pageLang = detectTextLang((document.body?.innerText || '').slice(0, 4000));
-            player.setSettings({ voice: edgeVoiceFor(pageLang) });
-          } else if (browserVoice) {
-            player.setSettings({ voice: browserVoice });
-          }
+
+        // الصوت يتبع لغة النص الحالي (فقرات القراءة إن كانت نشطة، وإلا الصفحة)
+        const sample = (isActive && blocks.length
+          ? blocks.map((b) => b.text).join(' ')
+          : document.body?.innerText || '').slice(0, 6000);
+        const textLang = detectTextLang(sample);
+        player.setSettings({
+          voice: engine === 'edge' ? edgeVoiceFor(textLang) : browserVoice,
+        });
+
+        const after = player.getSettings();
+        if (isActive && (after.rate !== before.rate || after.engine !== before.engine || after.voice !== before.voice)) {
+          // بدء التشغيل الجديد في الـ SW يوقف الصوت القديم فوراً
+          player.silence();
+          readParagraph(currentPara);
         }
         highlighter.setColors({
           ...(typeof data?.paraColor === 'string' ? { paragraph: data.paraColor } : {}),
@@ -275,10 +317,9 @@ overlay.setCallbacks({
     player.setSettings({ rate });
     try { chrome.storage.local.set({ rate }); } catch { /* ignore */ }
     if (isActive && player.getState() !== 'idle') {
-      cancelAudioThen(() => {
-        player.silence();
-        readParagraph(currentPara);
-      });
+      // بدء التشغيل الجديد يوقف القديم فوراً — لا حاجة لرسالة إلغاء منفصلة
+      player.silence();
+      readParagraph(currentPara);
     }
   },
 });
@@ -303,17 +344,54 @@ chrome.runtime.onMessage.addListener((msg: any, _sender, send) => {
       }
 
       case 'read': {
-        const res = resolveRead(document, msg);
-        if (res.error || !res.blocks?.length) {
-          send({ ok: false, error: res.error ?? 'NO_BLOCKS', message: res.message ?? 'لا توجد فقرات للقراءة.' });
-          return true;
-        }
-        const started = startReading(res.blocks, { rate: msg.rate, voice: msg.voice, engine: msg.engine });
-        if (!started.count) {
-          send({ ok: false, error: 'NO_BLOCKS', message: 'الفقرات المختارة فارغة.' });
-          return true;
-        }
-        send({ ok: true, data: started });
+        const requestSeq = readSeq;
+        void (async () => {
+          // انتظر تحميل إعدادات القارئ حتى لا يبدأ بصوت افتراضي ثم يُعاد تشغيله
+          if (!ready) {
+            await new Promise<void>((resolve) => {
+              const started = Date.now();
+              const t = setInterval(() => {
+                if (ready || Date.now() - started > 1500) {
+                  clearInterval(t);
+                  resolve();
+                }
+              }, 50);
+            });
+          }
+          // أُوقف/استُبدل قبل أن يبدأ — لا تبدأ قراءة متأخرة
+          if (requestSeq !== readSeq) {
+            send({ ok: false, error: 'TTS_STOPPED', message: 'أُوقف التشغيل قبل بدء القراءة.' });
+            return;
+          }
+          const res = resolveRead(document, msg);
+          if (res.error || !res.blocks?.length) {
+            send({ ok: false, error: res.error ?? 'NO_BLOCKS', message: res.message ?? 'لا توجد فقرات للقراءة.' });
+            return;
+          }
+          // ننتظر نتيجة أول فقرة حتى تعرف الأداة المحرك/الصوت الفعليين (Edge أو احتياطي)
+          try {
+            const started = await startReading(res.blocks, {
+              rate: msg.rate,
+              voice: msg.voice,
+              engine: msg.engine,
+              sessionId: msg.sessionId,
+              voiceId: msg.voiceId,
+            });
+            if (!started.count) {
+              send({
+                ok: false,
+                error: started.error || 'TTS_START_FAILED',
+                message: 'تعذر بدء القراءة الصوتية للفقرات المختارة.',
+              });
+              return;
+            }
+            send({ ok: true, data: started });
+          } catch (e) {
+            send({ ok: false, error: 'READER_ERROR', message: e instanceof Error ? e.message : String(e) });
+          }
+        })().catch((e) => {
+          send({ ok: false, error: 'READER_ERROR', message: e instanceof Error ? e.message : String(e) });
+        });
         return true;
       }
 
@@ -381,9 +459,14 @@ chrome.runtime.onMessage.addListener((msg: any, _sender, send) => {
       case 'set-rate': {
         const rate = Number(msg.rate);
         if (Number.isFinite(rate) && rate >= 0.5 && rate <= 2) {
+          const prev = player.getSettings().rate;
           player.setSettings({ rate });
           overlay.setSpeed(rate);
           try { chrome.storage.local.set({ rate }); } catch { /* ignore */ }
+          if (isActive && rate !== prev && player.getState() !== 'idle') {
+            player.silence();
+            readParagraph(currentPara);
+          }
           send({ ok: true });
         } else {
           send({ ok: false, error: 'BAD_RATE', message: 'السرعة يجب أن تكون بين 0.5 و2.' });
@@ -436,9 +519,10 @@ try {
   });
 } catch { /* ignore */ }
 
-// إيقاف الصوت عند مغادرة الصفحة — أفضل جهد
+// إيقاف الصوت عند مغادرة الصفحة — ملك هذا التبويب فقط، ولا يمس نصاً حراً في البانل
 window.addEventListener('pagehide', () => {
-  try { chrome.runtime.sendMessage({ type: 'tts-stop' }); } catch { /* ignore */ }
+  if (!isActive) return;
+  try { chrome.runtime.sendMessage({ type: 'tts-stop', scope: 'tab' }); } catch { /* ignore */ }
 });
 
 loadSettings();

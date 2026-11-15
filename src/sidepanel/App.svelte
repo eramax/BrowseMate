@@ -55,6 +55,13 @@
   });
 
   function handleEvent(e: any) {
+    // حالة الصوت تُبث لكل البانلات؛ العرض نفسه يفلترها حسب جلسته
+    if (e.type === 'tts-state') {
+      if (e.state && (!ttsState || (e.state.updatedAt ?? 0) >= (ttsState.updatedAt ?? 0))) ttsState = e.state;
+      return;
+    }
+    // أحداث تشغيل جلسة أخرى لا تخصّ هذه الواجهة
+    if (typeof e.sessionId === 'string' && e.sessionId && sessionId && e.sessionId !== sessionId) return;
     switch (e.type) {
       case 'chat-started':
         clearTimeout(ackTimer);
@@ -81,9 +88,6 @@
       case 'approval-request':
         approvals = [...approvals, { id: e.id, tool: e.tool, args: e.args, steps: e.steps }];
         break;
-      case 'tts-state':
-        ttsState = e.state;
-        break;
       case 'done':
       case 'error': {
         clearTimeout(ackTimer);
@@ -108,7 +112,7 @@
       sessionId = ens.id;
       await Promise.all([loadSession(sessionId), refreshSessions()]);
       const tts: any = await rpc('tts-status').catch(() => null);
-      if (tts?.ok) ttsState = tts.state;
+      if (tts?.ok && (!ttsState || (tts.state?.updatedAt ?? 0) >= (ttsState.updatedAt ?? 0))) ttsState = tts.state;
     })();
   });
 
@@ -165,7 +169,7 @@
     send(next.text, next.skill);
   }
 
-  function stop() { port.send({ type: 'stop' }); }
+  function stop() { port.send({ type: 'stop', sessionId }); }
   function approve(id: string, ok: boolean) {
     approvals = approvals.filter((a) => a.id !== id);
     port.send({ type: 'approval-response', id, approved: ok });
@@ -210,7 +214,7 @@
     await rpc('delete-session', { id });
     if (id === sessionId) {
       sessionId = ''; messages = [];
-      const ens: any = await rpc('ensure-session', { title: s.settings?.lang === 'ar' ? 'جلسة جديدة' : 'New chat' });
+      const ens: any = await rpc('ensure-session', { title: lang === 'ar' ? 'جلسة جديدة' : 'New chat' });
       sessionId = ens.id;
       await loadSession(sessionId);
     }
@@ -260,15 +264,15 @@
         send={send} stop={stop} approve={approve} retry={retry} openSettings={() => (tab = 'settings')}
         openSession={openSession} createSession={newSession} removeSession={deleteSession}
         {queuedText}
-        {ttsState}
-        ttsPlay={() => rpc('tts-resume')}
-        ttsPause={() => rpc('tts-pause')}
-        ttsStop={() => rpc('tts-stop')}
-        ttsSeek={(time) => rpc('tts-seek', { time })}
-        ttsReplay={() => rpc('tts-replay')}
-        ttsPrev={() => rpc('tts-prev')}
-        ttsNext={() => rpc('tts-next')}
-        ttsReplayVoice={(v) => rpc('tts-speak-text', { text: v.text, voice: v.voice, rate: v.rate, engine: v.engine, sessionId })}
+        ttsState={ttsState}
+        ttsPlay={() => rpc('tts-resume', { sessionId })}
+        ttsPause={() => rpc('tts-pause', { sessionId })}
+        ttsStop={() => rpc('tts-stop', { sessionId })}
+        ttsSeek={(time) => rpc('tts-seek', { time, sessionId })}
+        ttsReplay={() => rpc('tts-replay', { sessionId })}
+        ttsPrev={() => rpc('tts-prev', { sessionId })}
+        ttsNext={() => rpc('tts-next', { sessionId })}
+        ttsReplayVoice={(v) => rpc('tts-speak-text', { text: v.text, voice: v.voice, rate: v.rate, engine: v.engine, sessionId, voiceId: v.id, replay: true })}
       />
     {:else if tab === 'skills'}
       <SkillList {skills} {lang} run={runSkill} remove={deleteSkill} refresh={refreshSkills} />

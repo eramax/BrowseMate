@@ -5,7 +5,6 @@ import { loadSettings } from './settings';
 import { allTools, asAISDKTools } from './tools/registry';
 import { isGroupableUrl, isTabGroupingRequest } from './intent';
 import { createDebugLogger, type DebugLogger } from './debug';
-import { setTtsChatSession } from './tts-session';
 import type { ChatMessage, ToolCallInfo, ToolContext, WorkerToPanel, VoiceMessage } from '../shared/types';
 import type { SessionStore } from './sessions';
 
@@ -57,7 +56,6 @@ export async function runChat(
   skill?: { name: string; params: Record<string, string> },
 ) {
   const runId = crypto.randomUUID();
-  setTtsChatSession(sessionId);
   let debugRef: DebugLogger | undefined;
   const ac = new AbortController();
   deps.runs.set(runId, { ac, sessionId });
@@ -174,6 +172,8 @@ export async function runChat(
       lastPatchError: new Map<string, string>(),
       debug: dbg,
       getActiveTab: deps.getActiveTab,
+      sessionId,
+      runId,
       emit: (e) => deps.emit(sessionId, e),
       signal: ac.signal,
       approvalMode,
@@ -371,7 +371,7 @@ async function fallbackAnswer(
 export function extractVoiceMessage(toolName: string, out: any): VoiceMessage | null {
   if (toolName !== 'read_aloud' || !out?.ok || !out?.data?.text) return null;
   return {
-    id: crypto.randomUUID(),
+    id: String(out.data.voiceId || crypto.randomUUID()),
     text: String(out.data.text),
     voice: String(out.data.voice || ''),
     rate: Number(out.data.rate) || 1,

@@ -24,6 +24,14 @@ describe('extractVoiceMessage', () => {
     expect(v?.createdAt).toBeGreaterThan(0);
   });
 
+  it('reuses the playback voiceId so the live card binds to the saved message', () => {
+    const v = extractVoiceMessage('read_aloud', {
+      ok: true,
+      data: { text: 'نص', voice: 'ar-EG-ShakirNeural', rate: 1, engine: 'edge', voiceId: 'voice-42' },
+    });
+    expect(v?.id).toBe('voice-42');
+  });
+
   it('keeps a browser-default voice with an empty voice name', () => {
     const v = extractVoiceMessage('read_aloud', {
       ok: true,

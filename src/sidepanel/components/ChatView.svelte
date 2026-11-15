@@ -88,12 +88,21 @@
   const activeHistoryVoiceId = $derived.by(() => {
     if (!sessionTts?.active) return '';
     const rev = [...messages].reverse();
+    // المسار الدقيق: نفس معرّف الرسالة الصوتية عبر كل فقرات القراءة
+    if (sessionTts.voiceId) {
+      for (const m of rev) {
+        for (const v of m.voices ?? []) {
+          if (v.id === sessionTts.voiceId) return v.id;
+        }
+      }
+    }
     for (const m of rev) {
       for (const v of [...(m.voices ?? [])].reverse()) {
         if (v.text === sessionTts.text && (v.voice || '') === (sessionTts.voice || '')) return v.id;
       }
     }
-    if (sessionTts.tabId != null) {
+    // توافق مع رسائل قديمة بلا voiceId
+    if (!sessionTts.voiceId && sessionTts.tabId != null) {
       for (const m of rev) {
         const v = m.voices?.[m.voices.length - 1];
         if (v) return v.id;
@@ -117,12 +126,14 @@
       voice: v.voice,
       rate: v.rate,
       sessionId: currentId,
+      voiceId: v.id,
     };
   }
 
   function livePlay(): void {
     if (!sessionTts) return;
-    const ended = sessionTts.duration > 0 && sessionTts.currentTime >= sessionTts.duration - 0.25;
+    const ended = sessionTts.status === 'ended'
+      || (sessionTts.duration > 0 && sessionTts.currentTime >= sessionTts.duration - 0.25);
     if (!ended && sessionTts.currentTime > 0.2) ttsPlay();
     else ttsReplay();
   }

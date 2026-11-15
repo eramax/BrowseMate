@@ -1,7 +1,9 @@
 // محرك Microsoft Edge Read Aloud داخل offscreen document مخفي.
-// - يستقبل WS URL من الـ SW بعد تمويه UA.
+// - يستقبل WS URL من الـ SW بعد تثبيت UA عبر declarativeNetRequest.
 // - يركّب SSML، يجمع MP3 + WordBoundary، يشغّل الصوت ويرسل أحداث الكلمات.
-// - يسبق تجهيز الفقرتين التاليتين (prefetch) فيخزّنهما ويشغّلهما فوراً لتقليل التأخير.
+// - يسبق تجهيز الفقرتين التاليتين (prefetch) فيخزّنهما ويشغّلهما فوراً.
+// - التشغيل الجديد يُسكت القديم فوراً (لا صوتان متداخلان)، مع إبقاء WS والكاش.
+// - كل حدث يحمل playbackId حتى يتجاهل الـ SW أحداث التشغيلات القديمة.
 
 (() => {
   'use strict';
@@ -11,6 +13,7 @@
   const DEFAULT_AR = 'ar-EG-ShakirNeural';
   const DEFAULT_EN = 'en-US-EmmaMultilingualNeural';
   const CACHE_MAX = 8;
+  const SYNTH_TIMEOUT = 20_000;
 
   /** @type {WebSocket|null} */
   let ws = null;
@@ -25,11 +28,16 @@
   let currentTabId = null;
   let currentText = '';
   let currentKey = '';
-  /** @type {null | {requestId:string,text:string,voice:string,rate:number,tabId:number|null,chunks:Uint8Array[],metadata:any[],resolve:(v:any)=>void,timeout:any,prefetch:boolean,key:string}} */
+  let currentPlaybackId = '';
+  let currentEpoch = 0;
+  /**
+   * @type {null | {
+   *   requestId:string, text:string, voice:string, rate:number, tabId:number|null,
+   *   chunks:Uint8Array[], metadata:any[], resolve:(v:any)=>void, timeout:any,
+   *   prefetch:boolean, key:string, playbackId:string
+   * }}
+   */
   let pending = null;
-  /** طلب تشغيل رئيسي ينتظر انتهاء التركيب الحالي */
-  /** @type {null | {text:string,voice:string,rate:number,tabId:number|null,key:string,prefetch:any[],resolve:(v:any)=>void}} */
-  let nextRequest = null;
   /** @type {{key:string,text:string,voice:string,rate:number,tabId:number|null}[]} */
   let prefetchQueue = [];
   /** @type {Map<string,{url:string,boundaries:any[],text:string,voice:string,rate:number}>} */
@@ -50,7 +58,13 @@
 
   // ===== cache =====
   function cacheGet(key) {
-    return key ? cache.get(key) || null : null;
+    if (!key) return null;
+    const hit = cache.get(key);
+    if (!hit) return null;
+    // LRU: أعِد ترتيبه ليبقى الأحدث
+    cache.delete(key);
+    cache.set(key, hit);
+    return hit;
   }
 
   function cacheSet(key, entry) {
@@ -81,13 +95,6 @@
     prefetchQueue = [];
   }
 
-  function failQueued(error) {
-    if (!nextRequest) return;
-    const n = nextRequest;
-    nextRequest = null;
-    try { n.resolve({ ok: false, error }); } catch {}
-  }
-
   // ===== audio/timer =====
   function ensureAudio() {
     if (audio) return audio;
@@ -96,8 +103,7 @@
     audio.style.display = 'none';
     audio.addEventListener('ended', () => {
       stopTimer();
-      sendEvent('end');
-      maybeStartNext();
+      sendEvent('end', { duration: audio?.duration || 0 });
     });
     audio.addEventListener('error', () => {
       stopTimer();
@@ -115,11 +121,11 @@
   }
 
   function sendEvent(type, extra) {
-    // tabId قد يكون null عند قراءة نص حر من البانل بدون صفحة
     sendMessage({
       target: 'sw',
       type: 'edge-event',
       tabId: currentTabId,
+      playbackId: currentPlaybackId,
       event: { action: 'tts-event', type, ...(extra || {}) },
     });
   }
@@ -232,6 +238,7 @@
   function handleText(data) {
     const text = String(data);
     const rid = requestIdOf(text);
+    // تجاهل ردود turn قديم — لا تقتل الطلب الحالي
     if (pending && rid && rid !== pending.requestId) return;
     if (text.includes('Path:turn.end')) {
       finalize();
@@ -245,13 +252,13 @@
         const items = Array.isArray(json.Metadata) ? json.Metadata : [];
         for (const item of items) {
           const d = item && item.Data ? item.Data : item;
-          if (d && (d.text || d.Text)) pending && pending.metadata.push(d);
+          if (d && (d.text || d.Text) && pending) pending.metadata.push(d);
         }
       } catch {}
       return;
     }
     if (text.includes('Path:turn.start')) {
-      if (pending) resetTimeout();
+      if (pending) armTimeout(pending);
     }
   }
 
@@ -265,20 +272,27 @@
     if (pending) pending.chunks.push(bytes.subarray(at + AUDIO_DELIM.length));
   }
 
-  function resetTimeout() {
-    if (!pending) return;
-    clearTimeout(pending.timeout);
-    pending.timeout = setTimeout(() => {
-      const p = pending;
+  /**
+   * مهلة كل طلب مرتبطة بكائن الطلب نفسه — وليس بالمتغير العام pending.
+   * هذا يمنع مؤقت طلب قديم من قتل طلب جديد (السبب الجذري لبعض حالات الصمت).
+   */
+  function armTimeout(req) {
+    if (!req) return;
+    clearTimeout(req.timeout);
+    const timeoutMs = Math.max(SYNTH_TIMEOUT, Math.min(60_000, String(req.text || '').length * 10));
+    req.timeout = setTimeout(() => {
+      if (pending !== req) return;
       pending = null;
-      if (p.prefetch) {
+      req.timeout = null;
+      if (req.prefetch) {
         log('prefetch timeout');
-      } else {
-        try { p.resolve({ ok: false, error: 'EDGE_TIMEOUT' }); } catch {}
-        failQueued('EDGE_TIMEOUT');
+        runPrefetch();
+        return;
       }
-      runPrefetch();
-    }, 25000);
+      try { req.resolve({ ok: false, error: 'EDGE_TIMEOUT' }); } catch {}
+      // اتصال ميت محتمل: أغلقه ليعيد الـ SW فتحه في المحاولة التالية
+      resetSocket('EDGE_TIMEOUT');
+    }, timeoutMs);
   }
 
   function buildBoundaries(text, metadata) {
@@ -324,19 +338,12 @@
       .map((j) => ({ key: String(j.key), text: String(j.text), voice, rate, tabId }));
   }
 
-  function maybeStartNext() {
-    if (!nextRequest || pending) return;
-    if (audio && !audio.paused) return;
-    const n = nextRequest;
-    nextRequest = null;
-    startMain(n);
-  }
-
   function playEntry(req, entry, owned) {
     resetAudio();
     currentKey = req.key;
     currentText = entry.text;
     currentTabId = req.tabId;
+    currentPlaybackId = req.playbackId || '';
     boundaries = entry.boundaries;
     if (owned) blobUrl = entry.url;
     const player = ensureAudio();
@@ -347,7 +354,16 @@
       .then(() => {
         sendEvent('start', { duration: player.duration || 0 });
         startTimer();
-        try { req.resolve({ ok: true, bytes: entry.bytes || 0, words: boundaries.length, voice: req.voice || '', cached: !owned }); } catch {}
+        try {
+          req.resolve({
+            ok: true,
+            bytes: entry.bytes || 0,
+            words: boundaries.length,
+            voice: req.voice || '',
+            cached: !owned,
+            playbackId: currentPlaybackId,
+          });
+        } catch {}
         runPrefetch();
       })
       .catch((e) => {
@@ -363,10 +379,9 @@
     if (!ws || ws.readyState !== WebSocket.OPEN) {
       if (job.prefetch) return;
       try { job.resolve({ ok: false, error: 'EDGE_NO_WS' }); } catch {}
-      failQueued('EDGE_NO_WS');
       return;
     }
-    pending = {
+    const req = {
       requestId: uuid(),
       text: job.text,
       voice: job.voice,
@@ -378,27 +393,28 @@
       timeout: null,
       prefetch: Boolean(job.prefetch),
       key: job.key || '',
+      playbackId: job.playbackId || '',
     };
-    resetTimeout();
+    pending = req;
+    armTimeout(req);
     try {
       ws.send(speechConfig());
-      const rid = pending.requestId;
       ws.send(
-        `X-RequestId:${rid}\r\n` +
+        `X-RequestId:${req.requestId}\r\n` +
           'Content-Type:application/ssml+xml\r\n' +
           `X-Timestamp:${new Date().toUTCString()}\r\n` +
           'Path:ssml\r\n\r\n' +
           buildSSML(job.text, job.voice, job.rate),
       );
-      log(job.prefetch ? 'prefetch' : 'synth', rid, job.text.slice(0, 45));
+      log(job.prefetch ? 'prefetch' : 'synth', req.requestId, job.text.slice(0, 45));
     } catch (e) {
-      const p = pending;
-      pending = null;
-      if (p.prefetch) {
+      if (pending === req) pending = null;
+      clearTimeout(req.timeout);
+      if (req.prefetch) {
         log('prefetch send failed', e);
       } else {
-        try { p.resolve({ ok: false, error: 'EDGE_SEND_FAILED: ' + (e && e.message ? e.message : e) }); } catch {}
-        failQueued('EDGE_SEND_FAILED');
+        try { req.resolve({ ok: false, error: 'EDGE_SEND_FAILED: ' + (e && e.message ? e.message : e) }); } catch {}
+        resetSocket('EDGE_SEND_FAILED');
       }
     }
   }
@@ -413,7 +429,7 @@
     while (prefetchQueue.length && cache.has(prefetchQueue[0].key)) prefetchQueue.shift();
     const job = prefetchQueue.shift();
     if (!job) return;
-    sendSynthesis({ ...job, prefetch: true, resolve: () => {} });
+    sendSynthesis({ ...job, prefetch: true, resolve: () => {}, playbackId: '' });
   }
 
   function finalize() {
@@ -421,6 +437,7 @@
     const req = pending;
     pending = null;
     clearTimeout(req.timeout);
+    req.timeout = null;
 
     if (!req.chunks.length) {
       if (req.prefetch) {
@@ -428,7 +445,6 @@
         runPrefetch();
       } else {
         try { req.resolve({ ok: false, error: 'EDGE_NO_AUDIO' }); } catch {}
-        failQueued('EDGE_NO_AUDIO');
         clearPrefetch();
       }
       return;
@@ -442,19 +458,74 @@
     if (req.prefetch) {
       cacheSet(req.key, { url, boundaries: bounds, text: req.text, voice: req.voice, rate: req.rate });
       log('prefetched', req.key.slice(0, 40), 'words', bounds.length);
-      maybeStartNext();
       runPrefetch();
       return;
     }
 
-    playEntry(
-      req,
-      { url, boundaries: bounds, text: req.text, bytes: blob.size },
-      true,
-    );
+    playEntry(req, { url, boundaries: bounds, text: req.text, bytes: blob.size }, true);
   }
 
   // ===== public ops =====
+  /** إسكات فوري + إبطال أي طلب جارٍ.
+   *  hard=true (من edge-halt/stop) يغلق WS إن كان هناك turn نشط حتى لا يختلط
+   *  turn ملغى مع turn جديد. الكاش يبقى. */
+  function haltAudio(hard = false) {
+    const wasBusy = Boolean(pending) || Boolean(audio && !audio.paused);
+    clearPrefetch();
+    if (pending) {
+      const p = pending;
+      pending = null;
+      clearTimeout(p.timeout);
+      p.timeout = null;
+      if (!p.prefetch) {
+        try { p.resolve({ ok: false, error: 'EDGE_REPLACED' }); } catch {}
+      }
+    }
+    if (audio && !audio.paused) sendEvent('interrupted');
+    resetAudio();
+    if (hard && wasBusy && ws) {
+      const old = ws;
+      ws = null;
+      try {
+        old.onopen = null;
+        old.onmessage = null;
+        old.onerror = null;
+        old.onclose = null;
+        old.close();
+      } catch {}
+    }
+    currentPlaybackId = '';
+    currentTabId = null;
+  }
+
+  function resetSocket(error) {
+    clearPrefetch();
+    if (pending) {
+      const p = pending;
+      pending = null;
+      clearTimeout(p.timeout);
+      p.timeout = null;
+      if (!p.prefetch) {
+        try { p.resolve({ ok: false, error: error || 'EDGE_WS_CLOSED' }); } catch {}
+      }
+    }
+    if (audio && !audio.paused) sendEvent('error', { error: error || 'EDGE_WS_CLOSED' });
+    if (ws) {
+      const old = ws;
+      ws = null;
+      try {
+        old.onopen = null;
+        old.onmessage = null;
+        old.onerror = null;
+        old.onclose = null;
+        old.close();
+      } catch {}
+    }
+    resetAudio();
+    currentPlaybackId = '';
+    currentTabId = null;
+  }
+
   function speak(msg, sendResponse) {
     const req = {
       text: String(msg.text || ''),
@@ -463,27 +534,29 @@
       tabId: msg.tabId == null ? null : Number(msg.tabId),
       key: String(msg.key || ''),
       prefetch: Array.isArray(msg.prefetch) ? msg.prefetch : [],
+      playbackId: String(msg.playbackId || ''),
       resolve: sendResponse,
     };
     if (!req.text.trim()) {
       sendResponse({ ok: false, error: 'EMPTY_TEXT' });
       return;
     }
+
+    // طلب قديم وصل بعد halt/stop جديد: لا تشغّله
+    const epoch = Number(msg.epoch) || 0;
+    if (epoch && currentEpoch && epoch < currentEpoch) {
+      sendResponse({ ok: false, error: 'EDGE_STOPPED' });
+      return;
+    }
+    if (epoch) currentEpoch = Math.max(currentEpoch, epoch);
+
+    // أي تشغيل جديد يوقف الصوت السابق فوراً — حتى أثناء التركيب.
+    // الإغلاق الفعلي للـ WS يحدث في edge-halt (hard) قبل وصول الطلب الجديد.
+    haltAudio(false);
+    currentPlaybackId = req.playbackId;
+    currentTabId = req.tabId;
+
     const cached = cacheGet(req.key);
-    // إذا كان الجاري prefetch فقط والصوت المطلوب جاهز، شغّله فوراً دون انتظار الـ prefetch
-    if (cached && (!pending || pending.prefetch)) {
-      log('cached play', req.key.slice(0, 40));
-      failQueued('EDGE_REPLACED');
-      buildPrefetchQueue(req.prefetch, req.voice, req.rate, req.tabId, req.key);
-      playEntry(req, cached, false);
-      return;
-    }
-    if (pending) {
-      failQueued('EDGE_REPLACED');
-      nextRequest = req;
-      return;
-    }
-    failQueued('EDGE_REPLACED');
     if (cached) {
       log('cached play', req.key.slice(0, 40));
       buildPrefetchQueue(req.prefetch, req.voice, req.rate, req.tabId, req.key);
@@ -500,7 +573,17 @@
       sendResponse({ ok: true, reused: true });
       return;
     }
-    try { if (ws) ws.close(); } catch {}
+    if (ws) {
+      const old = ws;
+      ws = null;
+      try {
+        old.onopen = null;
+        old.onmessage = null;
+        old.onerror = null;
+        old.onclose = null;
+        old.close();
+      } catch {}
+    }
     const socket = new WebSocket(url);
     ws = socket;
     socket.binaryType = 'arraybuffer';
@@ -510,7 +593,7 @@
       settled = true;
       try { socket.close(); } catch {}
       sendResponse({ ok: false, error: 'EDGE_WS_TIMEOUT' });
-    }, 10000);
+    }, 12000);
 
     socket.onopen = () => {
       clearTimeout(timer);
@@ -520,69 +603,35 @@
       sendResponse({ ok: true });
     };
     socket.onmessage = (ev) => {
+      if (ws !== socket) return;
       if (typeof ev.data === 'string') handleText(ev.data);
       else handleBinary(ev.data);
     };
     socket.onerror = () => {
+      if (ws !== socket) return;
       if (!settled) {
         settled = true;
         clearTimeout(timer);
         sendResponse({ ok: false, error: 'EDGE_WS_ERROR' });
       }
-      if (pending) {
-        const p = pending;
-        pending = null;
-        clearTimeout(p.timeout);
-        if (!p.prefetch) {
-          try { p.resolve({ ok: false, error: 'EDGE_WS_ERROR' }); } catch {}
-        }
-      }
-      failQueued('EDGE_WS_ERROR');
-      clearPrefetch();
+      resetSocket('EDGE_WS_ERROR');
     };
     socket.onclose = () => {
+      if (ws !== socket) return;
       ws = null;
       if (!settled) {
         settled = true;
         clearTimeout(timer);
         sendResponse({ ok: false, error: 'EDGE_WS_CLOSED' });
       }
-      if (pending) {
-        const p = pending;
-        pending = null;
-        clearTimeout(p.timeout);
-        if (!p.prefetch) {
-          try { p.resolve({ ok: false, error: 'EDGE_WS_CLOSED' }); } catch {}
-        }
-      }
-      failQueued('EDGE_WS_CLOSED');
-      clearPrefetch();
+      resetSocket('EDGE_WS_CLOSED');
     };
   }
 
   function stopAudio() {
-    failQueued('EDGE_STOPPED');
-    clearPrefetch();
-    if (pending) {
-      const p = pending;
-      pending = null;
-      clearTimeout(p.timeout);
-      if (!p.prefetch) {
-        try { p.resolve({ ok: false, error: 'EDGE_STOPPED' }); } catch {}
-      }
-    }
-    resetAudio();
+    haltAudio();
     clearCache();
-    // أغلق الاتصال لإنهاء أي turn جارٍ قبل قراءة جديدة (يمنع تداخل SSML)
-    if (ws) {
-      try {
-        ws.onclose = null;
-        ws.onerror = null;
-        ws.onmessage = null;
-        ws.close();
-      } catch {}
-      ws = null;
-    }
+    resetSocket('EDGE_STOPPED');
   }
 
   chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
@@ -599,22 +648,42 @@
           ok: true,
           open: Boolean(ws && ws.readyState === WebSocket.OPEN),
           playing: Boolean(audio && !audio.paused),
+          playbackId: currentPlaybackId,
+          currentTime: Number(audio?.currentTime) || 0,
+          duration: Number(audio?.duration) || 0,
           words: boundaries.length,
           cached: cache.size,
           prefetch: prefetchQueue.length,
         });
         return true;
+      case 'edge-halt':
+        currentEpoch = Math.max(currentEpoch, Number(msg.epoch) || 0);
+        haltAudio(true);
+        sendResponse({ ok: true });
+        return true;
+      case 'edge-reset':
+        currentEpoch = Math.max(currentEpoch, Number(msg.epoch) || 0);
+        resetSocket('EDGE_RESET');
+        sendResponse({ ok: true });
+        return true;
       case 'edge-stop':
+        currentEpoch = Math.max(currentEpoch, Number(msg.epoch) || 0);
         stopAudio();
         sendResponse({ ok: true });
         return true;
       case 'edge-pause':
-        if (audio) { try { audio.pause(); } catch {} }
+        if (audio) {
+          try { audio.pause(); } catch {}
+          sendEvent('paused');
+        }
         sendResponse({ ok: true });
         return true;
       case 'edge-resume':
         if (audio) {
-          audio.play().then(() => startTimer()).catch(() => {});
+          audio.play().then(() => {
+            startTimer();
+            sendEvent('resumed');
+          }).catch(() => {});
         }
         sendResponse({ ok: true });
         return true;

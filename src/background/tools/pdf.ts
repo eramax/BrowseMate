@@ -2,6 +2,7 @@
 import { z } from 'zod';
 import { register } from './registry';
 import { savePdfArtifact } from '../artifacts';
+import { withDebugger } from '../debugger-lock';
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -24,7 +25,7 @@ register({
     html: z.string().min(20).describe('مستند HTML كامل مع التنسيق'),
     filename: z.string().describe('اسم الملف بدون مسار، ينتهي بـ .pdf'),
   }),
-  execute: async (a) => {
+  execute: (a) => withDebugger(async () => {
     const filename = String(a.filename || 'document.pdf').replace(/[\\/:*?"<>|]+/g, '-').slice(0, 80);
     const url = 'data:text/html;charset=utf-8,' + encodeURIComponent(String(a.html));
     if (url.length > 1_800_000) return { error: 'HTML كبير جداً (حد ~1.8MB)' };
@@ -67,5 +68,5 @@ register({
       if (attached) await chrome.debugger.detach(target).catch(() => {});
       await chrome.tabs.remove(tabId).catch(() => {});
     }
-  },
+  }),
 });

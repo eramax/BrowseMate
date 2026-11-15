@@ -8,9 +8,24 @@ import { seedSkills } from './seed';
 import { getArtifact } from './artifacts';
 import { debugStore, logSystemDebug } from './debug';
 import { chromeKV } from '../shared/storage';
-import { getTtsVoices, ttsPause, ttsResume, ttsSpeak, ttsStop } from './tts';
-import { edgeCancel, edgePause, edgeResume, edgeSeek, edgeSpeak, edgeStop, fetchEdgeVoices } from './edge';
-import { getTtsChatSession, getTtsState, handleEdgeEvent, resetTtsState, setTtsChatSession, setTtsEmitter, setTtsState, speakTextDirect } from './tts-session';
+import { getTtsVoices } from './tts';
+import { fetchEdgeVoices } from './edge';
+import {
+  getTtsState,
+  handleEdgeEvent,
+  initTtsLifecycle,
+  nextTts,
+  pauseTts,
+  prevTts,
+  replayTts,
+  resumeTts,
+  seekTts,
+  setTtsChatSession,
+  setTtsEmitter,
+  speakTextDirect,
+  startPagePlayback,
+  stopTts,
+} from './tts-session';
 import { validateSkill, buildSkillFromToolCalls } from './skills';
 import {
   getSkills, getOrderedSkills, saveSkill as storeSkill, deleteSkill as storeDeleteSkill,
@@ -48,9 +63,14 @@ self.addEventListener('unhandledrejection', (e) => {
   void logSystemDebug('sw:unhandledrejection', { reason: (e as any).reason });
 });
 
-let port: chrome.runtime.Port | undefined;
+const ports = new Set<chrome.runtime.Port>();
 let activeSessionId = '';
-setTtsEmitter((state) => port?.postMessage({ type: 'tts-state', state }));
+setTtsEmitter((state) => {
+  for (const p of ports) {
+    try { p.postMessage({ type: 'tts-state', state }); } catch { /* انقطع */ }
+  }
+});
+initTtsLifecycle();
 
 chrome.runtime.onInstalled.addListener(() => {
   chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch(console.error);
@@ -72,8 +92,10 @@ async function initLang() {
 chrome.runtime.onConnect.addListener((p) => {
   if (p.name !== 'panel') return;
   pullSkills().then(() => seedSkills()).catch((e) => { console.warn('skills init:', e); void logSystemDebug('skills:init-error', { error: e }); });
-  port = p;
-  p.onDisconnect.addListener(() => { port = undefined; });
+  ports.add(p);
+  p.onDisconnect.addListener(() => { ports.delete(p); });
+  // مزامنة أولية: البانل قد يُفتح بعد بدء الصوت أو بعد إعادة تشغيل الـ SW
+  try { p.postMessage({ type: 'tts-state', state: getTtsState() }); } catch { /* ignore */ }
   p.onMessage.addListener((msg: PanelToWorker) => {
     if (msg.type === 'chat') {
       activeSessionId = msg.sessionId;
@@ -85,6 +107,9 @@ chrome.runtime.onConnect.addListener((p) => {
     } else if (msg.type === 'stop') {
       approvals.rejectAll(); // لا تترك أداة معلقة على موافقة لن تأتي
       for (const r of runs.values()) r.ac.abort();
+      // زر الإيقاف يوقف أيضاً القراءة الصوتية الجارية/المعلّقة لهذه الجلسة
+      const stopFor = msg.sessionId || activeSessionId;
+      if (stopFor) void stopTts({ kind: 'session', sessionId: stopFor });
     } else if (msg.type === 'session-switch') {
       activeSessionId = msg.sessionId;
       setTtsChatSession(msg.sessionId);
@@ -93,7 +118,9 @@ chrome.runtime.onConnect.addListener((p) => {
 });
 
 function emit(sessionId: string, evt: WorkerToPanel) {
-  port?.postMessage({ ...evt, sessionId });
+  for (const p of ports) {
+    try { p.postMessage({ ...evt, sessionId }); } catch { /* انقطع */ }
+  }
 }
 
 // ===== RPC بسيط للطلبات غير المتدفقة (إعدادات/جلسات/مهارات) =====
@@ -122,131 +149,45 @@ chrome.runtime.onMessage.addListener((msg: any, sender, send) => {
         case 'get-settings': send({ ok: true, settings: await loadSettings() }); break;
         case 'tts-speak': {
           const tabId = sender.tab?.id ?? null;
-          const requested = msg.engine === 'browser' ? 'browser' : 'edge';
-          setTtsState({
-            active: true,
-            playing: true,
-            engine: requested,
-            title: String(msg.title || ''),
-            text: String(msg.text || ''),
-            index: Number.isFinite(Number(msg.index)) ? Number(msg.index) : 0,
-            total: Number.isFinite(Number(msg.total)) ? Number(msg.total) : 1,
-            currentTime: 0,
-            duration: 0,
-            tabId,
-            voice: String(msg.voice || ''),
-            rate: Number(msg.rate) || 1,
-            sessionId: getTtsChatSession(),
-          });
-
-          if (requested === 'edge') {
-            ttsStop();
-            const r = await edgeSpeak(
-              msg.text,
-              msg.voice,
-              msg.rate,
-              tabId,
-              String(msg.key || ''),
-              Array.isArray(msg.prefetch) ? msg.prefetch : [],
-            );
-            if (r.ok) {
-              send({ ok: true, engine: 'edge' });
-              break;
-            }
-            // المستخدم أوقف القراءة أثناء التركيب — لا تبدأ صوتاً بديلاً
-            if (r.error === 'EDGE_STOPPED') {
-              resetTtsState();
-              send({ ok: false, error: 'EDGE_STOPPED' });
-              break;
-            }
-            // احتياط: صوت المتصفح الافتراضي
-            const b = ttsSpeak(msg.text, msg.rate, undefined, tabId);
-            if (!b.ok) resetTtsState();
-            else setTtsState({ engine: 'browser' });
-            send({ ...b, engine: 'browser', fallback: true, edgeError: r.error });
-            break;
-          }
-          edgeStop();
-          const r = ttsSpeak(msg.text, msg.rate, msg.voice, tabId);
-          if (!r.ok) resetTtsState();
-          else setTtsState({ engine: 'browser' });
-          send({ ...r, engine: 'browser' });
+          send(await startPagePlayback(msg, tabId));
           break;
         }
         case 'tts-speak-text':
-          send(await speakTextDirect(String(msg.text || ''), msg.voice, msg.rate, msg.engine, msg.sessionId));
+          send(await speakTextDirect(String(msg.text || ''), msg.voice, msg.rate, msg.engine, msg.sessionId, msg.voiceId, Boolean(msg.replay)));
           break;
-        case 'tts-replay': {
-          const st = getTtsState();
-          if (st.tabId != null) {
-            chrome.tabs.sendMessage(st.tabId, { __ta: 'reader', op: 'replay' }).catch(() => {});
-            send({ ok: true });
-            break;
-          }
-          if (!st.text) {
-            send({ ok: false, error: 'NO_REPLAY' });
-            break;
-          }
-          send(await speakTextDirect(st.text, st.voice, st.rate, st.engine, st.sessionId));
+        case 'tts-replay':
+          send(await replayTts(String(msg.sessionId || '')));
           break;
-        }
-        case 'tts-pause': {
-          const tabId = getTtsState().tabId;
-          ttsPause();
-          edgePause();
-          setTtsState({ playing: false });
-          if (tabId != null) chrome.tabs.sendMessage(tabId, { action: 'tts-event', type: 'paused' }).catch(() => {});
-          send({ ok: true });
+        case 'tts-pause':
+          send({ ok: pauseTts(String(msg.sessionId || '')) });
           break;
-        }
-        case 'tts-resume': {
-          const tabId = getTtsState().tabId;
-          ttsResume();
-          edgeResume();
-          setTtsState({ playing: true });
-          if (tabId != null) chrome.tabs.sendMessage(tabId, { action: 'tts-event', type: 'resumed' }).catch(() => {});
-          send({ ok: true });
+        case 'tts-resume':
+          send({ ok: resumeTts(String(msg.sessionId || '')) });
           break;
-        }
-        case 'tts-cancel-audio': {
-          ttsStop();
-          await edgeCancel();
-          send({ ok: true });
-          break;
-        }
         case 'tts-stop': {
-          const fromPanel = sender.tab?.id == null;
-          const tabId = getTtsState().tabId;
-          ttsStop();
-          edgeStop();
-          if (fromPanel && tabId != null) {
-            chrome.tabs.sendMessage(tabId, { __ta: 'reader', op: 'remote-stop' }).catch(() => {});
-          }
-          resetTtsState();
-          send({ ok: true });
+          // من content script: إيقاف ملك هذا التبويب فقط. من البانل: الجلسة أو الكل.
+          // ملاحظة: البانل قد يُفتح كصفحة امتداد داخل تبويب، لذا لا نثق بـ sender.tab وحده.
+          const fromContent = msg.scope === 'tab'
+            || (sender.tab?.id != null && typeof sender.url === 'string' && !sender.url.startsWith('chrome-extension://'));
+          const scope = fromContent && sender.tab?.id != null
+            ? { kind: 'tab' as const, tabId: sender.tab.id }
+            : msg.sessionId
+              ? { kind: 'session' as const, sessionId: String(msg.sessionId) }
+              : { kind: 'all' as const };
+          send({ ok: await stopTts(scope) });
           break;
         }
         case 'tts-status':
           send({ ok: true, state: getTtsState() });
           break;
-        case 'tts-seek': {
-          const time = Number(msg.time) || 0;
-          setTtsState({ currentTime: time });
-          edgeSeek(time);
-          send({ ok: true });
+        case 'tts-seek':
+          send({ ok: seekTts(Number(msg.time) || 0, String(msg.sessionId || '')) });
           break;
-        }
         case 'tts-next':
-          if (getTtsState().tabId != null) {
-            chrome.tabs.sendMessage(getTtsState().tabId!, { __ta: 'reader', op: 'next' }).catch(() => {});
-          }
-          send({ ok: true });
+          send(await nextTts(String(msg.sessionId || '')));
           break;
         case 'tts-prev':
-          if (getTtsState().tabId != null) {
-            chrome.tabs.sendMessage(getTtsState().tabId!, { __ta: 'reader', op: 'prev' }).catch(() => {});
-          }
-          send({ ok: true });
+          send(await prevTts(String(msg.sessionId || '')));
           break;
         case 'tts-voices': {
           if (msg.engine === 'browser') {
@@ -284,6 +225,7 @@ chrome.runtime.onMessage.addListener((msg: any, sender, send) => {
           break;
         }
         case 'delete-session': {
+          await stopTts({ kind: 'session', sessionId: msg.id });
           await sessions.remove(msg.id);
           await debugStore.clear(msg.id);
           if (activeSessionId === msg.id) activeSessionId = '';

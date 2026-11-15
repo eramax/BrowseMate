@@ -46,7 +46,7 @@ export type PanelToWorker =
       skill?: { name: string; params: Record<string, string> };
     }
   | { type: 'approval-response'; id: string; approved: boolean }
-  | { type: 'stop' }
+  | { type: 'stop'; sessionId?: string }
   | { type: 'session-switch'; sessionId: string };
 
 /** حالة مشغّل الصوت داخل البانل (Edge/المتصفح) */
@@ -65,6 +65,14 @@ export interface TtsPanelState {
   rate: number;
   /** جلسة المحادثة التي بدأت الصوت — تمنع ظهور المشغل في جلسات أخرى */
   sessionId: string;
+  /** معرّف التشغيل — تُتجاهل أحداث التشغيلات القديمة */
+  playbackId?: string;
+  /** معرّف الرسالة الصوتية المحفوظة — ثابت بين فقرات القراءة الواحدة */
+  voiceId?: string;
+  /** مرحلة التشغيل الحالية */
+  status?: 'idle' | 'starting' | 'playing' | 'paused' | 'ended' | 'error';
+  /** آخر تحديث للحالة (للتشخيص) */
+  updatedAt?: number;
 }
 
 export type WorkerToPanel =
@@ -77,7 +85,7 @@ export type WorkerToPanel =
   | { type: 'approval-request'; id: string; tool: string; args: unknown; steps?: string[] }
   | { type: 'done'; runId: string }
   | { type: 'error'; runId?: string; message: string; code?: string }
-  | { type: 'sessions-list'; sessions: Array<Pick<Session, 'id' | 'title' | 'updatedAt'>> }
+  | { type: 'sessions-list'; sessions: Array<Pick<Session, 'id' | 'title' | 'updatedAt' | 'createdAt'>> }
   | { type: 'session-data'; session: Session }
   | { type: 'tts-state'; state: TtsPanelState };
 
@@ -92,6 +100,10 @@ export interface ToolContext {
   emit: (evt: WorkerToPanel) => void;
   requestApproval: (tool: string, args: unknown, steps?: string[]) => Promise<boolean>;
   signal?: AbortSignal;
+  /** جلسة المحادثة التي ينتمي إليها هذا التشغيل — أساس عزل الصوت */
+  sessionId: string;
+  /** معرّف التشغيل الحالي (اختياري للتشخيص) */
+  runId?: string;
   /** وضع الصلاحيات: sensitive = اسأل عن الحساس فقط، always = اسأل دائمًا، never = بدون سؤال */
   approvalMode: ApprovalMode;
   /** أدوات التشغيل الحالي — تتيح للنموذج تحويل ما نُفذ فعلاً إلى مهارة */

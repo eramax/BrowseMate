@@ -20,6 +20,8 @@ export class ReaderOverlay {
   private speedIdx = 2;
   private pendingSpeed: number | null = null;
   private callbacks: OverlayCallbacks = {};
+  private onDocMove: ((e: MouseEvent) => void) | null = null;
+  private onDocUp: (() => void) | null = null;
 
   setCallbacks(cb: OverlayCallbacks): void {
     this.callbacks = cb;
@@ -147,17 +149,17 @@ export class ReaderOverlay {
       dy = e.clientY - overlay.getBoundingClientRect().top;
       overlay.classList.add('dragging');
     });
-    document.addEventListener('mousemove', (e) => {
+    document.addEventListener('mousemove', (this.onDocMove = (e) => {
       if (!dragging) return;
       overlay.style.left = e.clientX - dx + 'px';
       overlay.style.top = e.clientY - dy + 'px';
       overlay.style.right = 'auto';
       overlay.style.bottom = 'auto';
-    });
-    document.addEventListener('mouseup', () => {
+    }));
+    document.addEventListener('mouseup', (this.onDocUp = () => {
       dragging = false;
       overlay.classList.remove('dragging');
-    });
+    }));
   }
 
   show(): void {
@@ -180,6 +182,10 @@ export class ReaderOverlay {
     this.visible = false;
     setTimeout(() => {
       if (!this.visible && this.host) {
+        if (this.onDocMove) document.removeEventListener('mousemove', this.onDocMove);
+        if (this.onDocUp) document.removeEventListener('mouseup', this.onDocUp);
+        this.onDocMove = null;
+        this.onDocUp = null;
         this.host.remove();
         this.host = null;
         this.shadow = null;

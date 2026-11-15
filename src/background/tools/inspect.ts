@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { register } from './registry';
 import { t } from '../../shared/i18n';
 import { resolveTabId } from './tab-id';
+import { withDebugger } from '../debugger-lock';
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -16,7 +17,7 @@ register({
     scriptId: z.string().optional(),
     tabId: z.number().optional().describe('معرف تبويب خلفي (اختياري)'),
   }),
-  execute: async (a, ctx) => {
+  execute: (a, ctx) => withDebugger(async () => {
     const tabId = await resolveTabId(a.tabId, ctx);
     if (tabId == null) return { error: 'NO_ACTIVE_TAB', message: 'لا يوجد تبويب نشط.' };
     const tab = await chrome.tabs.get(tabId);
@@ -52,5 +53,5 @@ register({
       chrome.debugger.onEvent.removeListener(onEvent);
       await chrome.debugger.detach(target).catch(() => {});
     }
-  },
+  }),
 });

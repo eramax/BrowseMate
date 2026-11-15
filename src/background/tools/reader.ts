@@ -5,7 +5,7 @@ import { withReader } from '../inject';
 import { resolveTabId } from './tab-id';
 import { getTtsVoices } from '../tts';
 import { fetchEdgeVoices, type EdgeVoice } from '../edge';
-import { speakTextDirect } from '../tts-session';
+import { clearPendingPageRead, getTtsState, registerPendingPageRead, speakTextDirect, stopTts } from '../tts-session';
 
 register({
   name: 'page_outline',
@@ -45,6 +45,9 @@ register({
     voice: z.string().max(200).optional().describe('اسم صوت من list_tts_voices (مثل ar-EG-ShakirNeural)'),
   }),
   execute: async (a, ctx) => {
+    if (ctx.signal?.aborted) {
+      return { error: 'USER_CANCELLED', message: 'أُوقف التشغيل قبل بدء القراءة.' };
+    }
     const modes = [
       Boolean(a.blockIds?.length),
       Boolean(a.fromBlockId || a.toBlockId),
@@ -116,7 +119,7 @@ register({
       a.selection !== true;
     if (isTextOnly) {
       const text = String(a.text || '');
-      const res: any = await speakTextDirect(text, a.voice, a.rate, engine);
+      const res: any = await speakTextDirect(text, a.voice, a.rate, engine, ctx.sessionId);
       if (res?.ok) {
         return {
           ok: true,
@@ -128,7 +131,12 @@ register({
             rate: a.rate ?? 1,
             first: text.slice(0, 120),
             text: text.slice(0, 12000),
+            ...(res.voiceId ? { voiceId: res.voiceId } : {}),
+            ...(res.fallback ? { fallback: true, edgeError: res.edgeError } : {}),
           },
+          ...(res.fallback
+            ? { message: `تعذر Edge — تم استخدام صوت المتصفح الاحتياطي (${res.voice || 'افتراضي'}). ${res.edgeError || ''}`.trim() }
+            : {}),
         };
       }
       return res;
@@ -136,8 +144,22 @@ register({
 
     const tabId = await resolveTabId(a.tabId, ctx);
     if (tabId == null) return { error: 'NO_ACTIVE_TAB', message: 'لا يوجد تبويب نشط.' };
+    if (ctx.signal?.aborted) return { error: 'USER_CANCELLED', message: 'أُوقف التشغيل قبل بدء القراءة.' };
     const { tabId: _omit, ...payload } = a;
-    return withReader(tabId, 'read', { ...payload, engine });
+    // نولّد المعرّف هنا حتى يستطيع Stop إلغاء القراءة قبل أن يصل أول tts-speak
+    const voiceId = crypto.randomUUID();
+    registerPendingPageRead(tabId, ctx.sessionId, voiceId);
+    try {
+      return await withReader(tabId, 'read', {
+        ...payload,
+        engine,
+        sessionId: ctx.sessionId,
+        voiceId,
+        runId: ctx.runId,
+      });
+    } finally {
+      clearPendingPageRead(tabId, voiceId);
+    }
   },
 });
 
@@ -188,8 +210,13 @@ register({
   schema: z.object({ tabId: z.number().optional() }),
   execute: async (a, ctx) => {
     const tabId = await resolveTabId(a.tabId, ctx);
-    if (tabId == null) return { error: 'NO_ACTIVE_TAB', message: 'لا يوجد تبويب نشط.' };
-    return withReader(tabId, 'stop');
+    const active = getTtsState();
+    // أوقف المحرك أولاً — حتى لو لم يعد التبويب موجوداً أو كانت القراءة نصاً حراً
+    await stopTts({ kind: 'all' });
+    if (tabId != null) {
+      await withReader(tabId, 'remote-stop').catch(() => ({ ok: false }));
+    }
+    return { ok: true, data: { stopped: true, tabId: active.tabId ?? tabId } };
   },
 });
 
@@ -200,9 +227,28 @@ register({
   idempotent: true,
   schema: z.object({ tabId: z.number().optional() }),
   execute: async (a, ctx) => {
+    const state = getTtsState();
     const tabId = await resolveTabId(a.tabId, ctx);
-    if (tabId == null) return { error: 'NO_ACTIVE_TAB', message: 'لا يوجد تبويب نشط.' };
-    return withReader(tabId, 'status');
+    let page: any = null;
+    if (tabId != null) {
+      page = await withReader(tabId, 'status').catch(() => null);
+    }
+    return {
+      ok: true,
+      data: {
+        active: Boolean(state.active || page?.data?.active),
+        playing: Boolean(state.playing),
+        engine: state.engine,
+        voice: state.voice,
+        rate: state.rate,
+        sessionId: state.sessionId,
+        index: state.index,
+        total: state.total,
+        text: state.text.slice(0, 160),
+        tabId: state.tabId ?? tabId,
+        page: page?.data ?? null,
+      },
+    };
   },
 });
 

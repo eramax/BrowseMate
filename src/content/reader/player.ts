@@ -1,5 +1,6 @@
-// جسر التشغيل بين content script وchrome.tts في الـ service worker
-// الأحداث تعود من الخلفية: start/word/end/interrupted/error
+// جسر التشغيل بين content script وchrome.tts/Edge في الـ service worker.
+// الأحداث تعود من الخلفية: start/word/end/interrupted/error.
+// speak() يعيد وعداً بنتيجة البدء الفعلية (المحرك/الصوت) حتى تُحفظ رسالة صوتية صادقة.
 
 export type PlayerState = 'idle' | 'speaking' | 'paused';
 
@@ -9,11 +10,23 @@ export interface PlayerSettings {
   engine: 'edge' | 'browser';
 }
 
+export interface SpeakResult {
+  ok: boolean;
+  engine?: 'edge' | 'browser';
+  voice?: string;
+  voiceId?: string;
+  fallback?: boolean;
+  edgeError?: string;
+  error?: string;
+}
+
 export class TtsPlayer {
   private state: PlayerState = 'idle';
   private settings: PlayerSettings = { rate: 1, voice: '', engine: 'edge' };
   private speakSeq = 0;
   private actualEngine: 'edge' | 'browser' | null = null;
+  private sessionId = '';
+  private pendingSpeak: ((r: SpeakResult) => void) | null = null;
 
   onBoundary: ((charIndex: number, length: number, word: string) => void) | null = null;
   onEnd: (() => void) | null = null;
@@ -76,6 +89,12 @@ export class TtsPlayer {
     this.onStateChange?.(s);
   }
 
+  private settlePending(result: SpeakResult): void {
+    const fn = this.pendingSpeak;
+    this.pendingSpeak = null;
+    try { fn?.(result); } catch { /* ignore */ }
+  }
+
   speak(
     text: string,
     _index: number,
@@ -85,9 +104,13 @@ export class TtsPlayer {
       index?: number;
       total?: number;
       title?: string;
+      sessionId?: string;
+      voiceId?: string;
     } = {},
-  ): void {
+  ): Promise<SpeakResult> {
     const seq = ++this.speakSeq;
+    this.settlePending({ ok: false, error: 'SUPERSEDED' });
+    this.sessionId = String(opts.sessionId || '');
     const payload = {
       type: 'tts-speak',
       text,
@@ -99,42 +122,82 @@ export class TtsPlayer {
       ...(opts.index != null ? { index: opts.index } : {}),
       ...(opts.total != null ? { total: opts.total } : {}),
       ...(opts.title ? { title: opts.title } : {}),
+      ...(opts.sessionId ? { sessionId: opts.sessionId } : {}),
+      ...(opts.voiceId ? { voiceId: opts.voiceId } : {}),
     };
-    try {
-      chrome.runtime.sendMessage(payload, (res: any) => {
-        // تجاهل ردود الطلبات القديمة بعد stop/قراءة جديدة
-        if (seq !== this.speakSeq) return;
-        if (chrome.runtime.lastError || !res?.ok) {
-          this.setState('idle');
-          this.onError?.(chrome.runtime.lastError?.message ?? res?.error);
-          return;
-        }
-        this.actualEngine = res.engine === 'browser' ? 'browser' : 'edge';
-        this.setState('speaking');
-      });
-    } catch (e) {
-      if (seq !== this.speakSeq) return;
-      this.setState('idle');
-      this.onError?.(e instanceof Error ? e.message : String(e));
-    }
+
+    return new Promise<SpeakResult>((resolve) => {
+      let settled = false;
+      const timer = setTimeout(() => finish({ ok: false, error: 'TTS_TIMEOUT' }), 60_000);
+      const finish = (result: SpeakResult): void => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        if (this.pendingSpeak === finish) this.pendingSpeak = null;
+        resolve(result);
+      };
+      this.pendingSpeak = finish;
+
+      try {
+        chrome.runtime.sendMessage(payload, (res: any) => {
+          // تجاهل ردود الطلبات القديمة بعد stop/قراءة جديدة
+          if (seq !== this.speakSeq) {
+            finish({ ok: false, error: 'SUPERSEDED' });
+            return;
+          }
+          if (chrome.runtime.lastError || !res?.ok) {
+            const error = chrome.runtime.lastError?.message ?? res?.error;
+            this.setState('idle');
+            this.onError?.(error);
+            finish({ ok: false, error });
+            return;
+          }
+          this.actualEngine = res.engine === 'browser' ? 'browser' : 'edge';
+          this.setState('speaking');
+          finish({
+            ok: true,
+            engine: this.actualEngine,
+            voice: typeof res.voice === 'string' ? res.voice : undefined,
+            voiceId: typeof res.voiceId === 'string' ? res.voiceId : undefined,
+            fallback: Boolean(res.fallback),
+            edgeError: typeof res.edgeError === 'string' ? res.edgeError : undefined,
+          });
+        });
+      } catch (e) {
+        const error = e instanceof Error ? e.message : String(e);
+        this.setState('idle');
+        this.onError?.(error);
+        finish({ ok: false, error });
+      }
+    });
   }
 
   pause(): void {
     if (this.state !== 'speaking') return;
-    try { chrome.runtime.sendMessage({ type: 'tts-pause' }); } catch { /* ignore */ }
-    this.setState('paused');
+    const seq = this.speakSeq;
+    try {
+      chrome.runtime.sendMessage({ type: 'tts-pause', sessionId: this.sessionId }, (res: any) => {
+        if (seq === this.speakSeq && res?.ok) this.setState('paused');
+      });
+    } catch { /* ignore */ }
   }
 
   resume(): void {
     if (this.state !== 'paused') return;
-    try { chrome.runtime.sendMessage({ type: 'tts-resume' }); } catch { /* ignore */ }
-    this.setState('speaking');
+    const seq = this.speakSeq;
+    try {
+      chrome.runtime.sendMessage({ type: 'tts-resume', sessionId: this.sessionId }, (res: any) => {
+        if (seq === this.speakSeq && res?.ok) this.setState('speaking');
+      });
+    } catch { /* ignore */ }
   }
 
   stop(): void {
     this.speakSeq++;
     this.actualEngine = null;
-    try { chrome.runtime.sendMessage({ type: 'tts-stop' }); } catch { /* ignore */ }
+    this.sessionId = '';
+    this.settlePending({ ok: false, error: 'STOPPED' });
+    try { chrome.runtime.sendMessage({ type: 'tts-stop', scope: 'tab' }); } catch { /* ignore */ }
     this.setState('idle');
   }
 
@@ -142,6 +205,7 @@ export class TtsPlayer {
   silence(): void {
     this.speakSeq++;
     this.actualEngine = null;
+    this.settlePending({ ok: false, error: 'SUPERSEDED' });
     this.setState('idle');
   }
 }
