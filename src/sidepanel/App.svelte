@@ -132,8 +132,17 @@
       // إخفاء مسودات فارغة قديمة (بقايا انقطاع) — لا فقاعات فارغة في الشات
       messages = (res.session.messages as ChatMessage[])
         .filter((m) => m.role !== 'assistant' || m.content.trim() || m.toolCalls?.length || m.voices?.length)
-        // رسالة صوتية واحدة لكل رد — نعرض آخر قراءة فقط (بيانات قديمة قد تحتوي أكثر)
-        .map((m) => (m.voices && m.voices.length > 1 ? { ...m, voices: [m.voices[m.voices.length - 1]] } : m));
+        // رسالة صوتية واحدة لكل رد. للبيانات القديمة نعرض النص الأطول (الأكثر اكتمالاً)،
+        // وإذا كان مصدره صوت متصفح نحوّله إلى Edge لأن التشغيل الجديد Edge فقط.
+        .map((m) => {
+          if (!m.voices?.length) return m;
+          const best = m.voices.reduce((a, b) => ((b.text?.length || 0) >= (a.text?.length || 0) ? b : a));
+          const isBrowserVoice = best.engine !== 'edge' || !/Neural$/i.test(best.voice || '');
+          const voice = isBrowserVoice
+            ? (/[\u0600-\u06FF]/.test(best.text) ? 'ar-EG-ShakirNeural' : 'en-US-EmmaMultilingualNeural')
+            : best.voice;
+          return { ...m, voices: [{ ...best, engine: 'edge' as const, voice }] };
+        });
     }
   }
   async function refreshSessions() {
