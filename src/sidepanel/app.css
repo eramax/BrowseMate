@@ -318,3 +318,15 @@ input, textarea, select { font: inherit; }
   gap: 6px;
   margin-top: 4px;
 }
+
+.s-num {
+  flex: none;
+  font-size: 10px;
+  color: var(--muted);
+  background: var(--bg);
+  border: 1px solid var(--border-soft);
+  border-radius: 6px;
+  padding: 1px 5px;
+  direction: ltr;
+  font-variant-numeric: tabular-nums;
+}

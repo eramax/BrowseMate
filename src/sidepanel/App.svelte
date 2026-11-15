@@ -13,7 +13,7 @@
   let lang = $state<Lang>('en');
   let sessionId = $state('');
   let messages = $state<ChatMessage[]>([]);
-  let sessionsList = $state<Array<Pick<Session, 'id' | 'title' | 'updatedAt'>>>([]);
+  let sessionsList = $state<Array<Pick<Session, 'id' | 'title' | 'updatedAt' | 'createdAt'>>>([]);
   let skills = $state<SkillFile[]>([]);
 
   let busy = $state(false);

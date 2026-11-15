@@ -242,7 +242,7 @@ export async function edgeSpeak(
   const c = await ensureEdgeConnected();
   if (epoch !== edgeEpoch) return { ok: false, error: 'EDGE_STOPPED' };
   if (!c.ok) return { ok: false, error: c.error };
-  const res = await sendOffscreen({
+  const payload = {
     type: 'edge-speak',
     text,
     voice: voice || '',
@@ -250,7 +250,13 @@ export async function edgeSpeak(
     tabId,
     key,
     prefetch,
-  });
+  };
+  let res: any = await sendOffscreen(payload);
+  // قناة الـ offscreen قد تنقطع أثناء إعادة إنشائه: أعد المحاولة مرة واحدة
+  if (!res?.ok && /channel closed|receiving end|EDGE_NO_WS|EDGE_WS_CLOSED/i.test(String(res?.error || ''))) {
+    const reset = await resetEdge();
+    if (reset.ok) res = await sendOffscreen(payload);
+  }
   if (epoch !== edgeEpoch) return { ok: false, error: 'EDGE_STOPPED' };
   if (!res?.ok) {
     console.warn('[EdgeTTS] speak failed:', res?.error);
@@ -270,6 +276,17 @@ export function edgeStop(): void {
   edgeEpoch++;
   void sendOffscreen({ type: 'edge-stop' });
   edgeActiveTabId = null;
+}
+
+/** إعادة إنشاء محرك Edge بعد انقطاع قناة الرسائل */
+export async function resetEdge(): Promise<{ ok: boolean; error?: string }> {
+  connecting = null;
+  try {
+    await ensureOffscreen(true);
+  } catch (e) {
+    return { ok: false, error: msgOf(e) };
+  }
+  return ensureEdgeConnected();
 }
 
 /** إيقاف فوري مع انتظار إغلاق الـ WS — يُستخدم قبل إعادة القراءة بسرعة جديدة */

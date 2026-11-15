@@ -2,7 +2,7 @@
 // الأدوات تعمل داخل الـ SW؛ لا تستخدم chrome.runtime.sendMessage إلى نفسها.
 import type { TtsPanelState } from '../shared/types';
 import { edgeSpeak, edgeStop } from './edge';
-import { ttsSpeak, ttsStop } from './tts';
+import { getTtsVoices, ttsSpeak, ttsStop } from './tts';
 
 const EMPTY_TTS_STATE: TtsPanelState = {
   active: false,
@@ -69,6 +69,17 @@ export function handleEdgeEvent(msg: any): void {
   if (msg.tabId != null) chrome.tabs.sendMessage(msg.tabId, e).catch(() => {});
 }
 
+/** اختيار صوت متصفح مناسب للغة النص عند السقوط من Edge */
+async function browserVoiceFor(text: string, requested?: string): Promise<string> {
+  if (requested) return requested;
+  const voices = await getTtsVoices().catch(() => []);
+  if (!voices.length) return '';
+  const isArabic = /[\u0600-\u06FF]/.test(text);
+  const prefix = isArabic ? 'ar' : 'en';
+  const matches = voices.filter((v) => v.lang.toLowerCase().startsWith(prefix));
+  return (matches.find((v) => v.supportsWord) || matches[0] || voices[0])?.name || '';
+}
+
 /** قراءة نص حر في مشغل البانل بدون الحاجة لصفحة أو content script */
 export async function speakTextDirect(
   text: string,
@@ -78,9 +89,8 @@ export async function speakTextDirect(
   sessionId?: string,
 ): Promise<any> {
   const eng: 'edge' | 'browser' = engine === 'browser' ? 'browser' : 'edge';
-  const chosenVoice = String(voice || '') || (eng === 'edge'
-    ? (/[\u0600-\u06FF]/.test(text) ? 'ar-EG-ShakirNeural' : 'en-US-EmmaMultilingualNeural')
-    : '');
+  const edgeVoice = String(voice || '') || (/[\u0600-\u06FF]/.test(text) ? 'ar-EG-ShakirNeural' : 'en-US-EmmaMultilingualNeural');
+  const chosenVoice = eng === 'edge' ? edgeVoice : await browserVoiceFor(text, voice);
   state = {
     active: true,
     playing: true,
@@ -106,14 +116,15 @@ export async function speakTextDirect(
       resetTtsState();
       return { ok: false, error: 'EDGE_STOPPED' };
     }
-    const b = ttsSpeak(text, rate, undefined, null);
+    const fallbackVoice = await browserVoiceFor(text);
+    const b = ttsSpeak(text, rate, fallbackVoice || undefined, null);
     if (!b.ok) resetTtsState();
-    else setTtsState({ engine: 'browser', voice: '' });
-    return { ...b, engine: 'browser', voice: '', fallback: true, edgeError: r.error };
+    else setTtsState({ engine: 'browser', voice: fallbackVoice });
+    return { ...b, engine: 'browser', voice: fallbackVoice, fallback: true, edgeError: r.error };
   }
 
   edgeStop();
-  const b = ttsSpeak(text, rate, voice, null);
+  const b = ttsSpeak(text, rate, chosenVoice || undefined, null);
   if (!b.ok) resetTtsState();
   else setTtsState({ engine: 'browser', voice: chosenVoice });
   return { ...b, engine: 'browser', voice: chosenVoice };

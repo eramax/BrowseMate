@@ -20,7 +20,7 @@
     approvals: Array<{ id: string; tool: string; args: unknown; steps?: string[] }>;
     progress: string;
     lang: Lang;
-    sessions: Array<{ id: string; title: string; updatedAt: number }>;
+    sessions: Array<{ id: string; title: string; updatedAt: number; createdAt: number }>;
     currentId: string;
     settingsError: boolean;
     stalled: boolean;
@@ -69,6 +69,17 @@
   });
 
   const currentTitle = $derived(sessions.find((s) => s.id === currentId)?.title ?? L.newSession);
+  // رقم تسلسلي ثابت حسب تاريخ الإنشاء (الأقدم = 1)
+  const sessionNumbers = $derived.by(() => {
+    const ordered = [...sessions].sort((a, b) => {
+      const ac = a.createdAt || 0;
+      const bc = b.createdAt || 0;
+      if (ac && bc && ac !== bc) return ac - bc;
+      return a.id.localeCompare(b.id);
+    });
+    return new Map(ordered.map((s, i) => [s.id, i + 1]));
+  });
+  const currentNumber = $derived(sessionNumbers.get(currentId));
   const runningTool = $derived(toolCalls.find((c) => c.status === 'running')?.name);
   // صوت مرتبط بهذه الجلسة فقط — لا يظهر مشغل جلسة أخرى
   const sessionTts = $derived(ttsState && ttsState.sessionId === currentId ? ttsState : null);
@@ -146,6 +157,7 @@
   <!-- مبدّل الجلسات داخل الشات -->
   <div class="session-bar" dir={lang === 'ar' ? 'rtl' : 'ltr'}>
     <button class="session-btn" onclick={() => (menuOpen = !menuOpen)}>
+      {#if currentNumber}<span class="s-num">#{currentNumber}</span>{/if}
       <span class="s-title">{currentTitle}</span>
       <span class="chev">▾</span>
     </button>
@@ -156,6 +168,7 @@
         {#if !sessions.length}<div class="empty" style="padding:12px">{L.noSessions}</div>{/if}
         {#each sessions as s (s.id)}
           <div class="s-item" class:active={s.id === currentId}>
+            <span class="s-num">#{sessionNumbers.get(s.id) ?? '?'}</span>
             <span class="s-name" onclick={() => { openSession(s.id); menuOpen = false; }}>{s.title}</span>
             <button class="mini danger" onclick={() => removeSession(s.id)}>✕</button>
           </div>

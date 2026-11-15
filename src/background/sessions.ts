@@ -22,11 +22,11 @@ export function createSessionStore(kv: KV) {
       return s;
     },
     async list() {
-      const out: Array<Pick<Session, 'id' | 'title' | 'updatedAt'>> = [];
+      const out: Array<Pick<Session, 'id' | 'title' | 'updatedAt' | 'createdAt'>> = [];
       for (const k of await kv.keys()) {
         if (!k.startsWith(PREFIX)) continue;
         const s = await kv.get<Session>(k);
-        if (s) out.push({ id: s.id, title: s.title, updatedAt: s.updatedAt });
+        if (s) out.push({ id: s.id, title: s.title, updatedAt: s.updatedAt, createdAt: s.createdAt });
       }
       return out.sort((a, b) => b.updatedAt - a.updatedAt); // الأحدث أولاً
     },
