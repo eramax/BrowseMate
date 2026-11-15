@@ -404,7 +404,7 @@
   function sendSynthesis(job) {
     if (!ws || ws.readyState !== WebSocket.OPEN) {
       if (job.prefetch) return;
-      try { job.resolve({ ok: false, error: 'EDGE_NO_WS' }); } catch {}
+      try { job.resolve({ ok: false, error: 'EDGE_NO_WS', opened: Boolean(ws) }); } catch {}
       return;
     }
     const req = {
@@ -608,7 +608,7 @@
     currentTabId = null;
   }
 
-  function resetSocket(error) {
+  function resetSocket(error, meta) {
     clearPrefetch();
     if (pending) {
       const p = pending;
@@ -616,7 +616,7 @@
       clearTimeout(p.timeout);
       p.timeout = null;
       if (!p.prefetch) {
-        try { p.resolve({ ok: false, error: error || 'EDGE_WS_CLOSED' }); } catch {}
+        try { p.resolve({ ok: false, error: error || 'EDGE_WS_CLOSED', ...(meta || {}) }); } catch {}
       }
     }
     if (audio && !audio.paused) sendEvent('error', { error: error || 'EDGE_WS_CLOSED' });
@@ -678,9 +678,9 @@
 
   function connect(msg, sendResponse) {
     const url = String(msg.wsUrl || '');
-    if (!url) { sendResponse({ ok: false, error: 'NO_WS_URL' }); return; }
+    if (!url) { sendResponse({ ok: false, error: 'NO_WS_URL', opened: false }); return; }
     if (ws && ws.readyState === WebSocket.OPEN) {
-      sendResponse({ ok: true, reused: true });
+      sendResponse({ ok: true, reused: true, opened: true });
       return;
     }
     if (ws) {
@@ -698,34 +698,42 @@
     ws = socket;
     socket.binaryType = 'arraybuffer';
     let settled = false;
+    let opened = false;
+    let bytes = 0;
+    const startedAt = Date.now();
+    const meta = () => ({ opened, bytes, ageMs: Date.now() - startedAt });
     const timer = setTimeout(() => {
       if (settled) return;
       settled = true;
       try { socket.close(); } catch {}
-      sendResponse({ ok: false, error: 'EDGE_WS_TIMEOUT' });
+      sendResponse({ ok: false, error: 'EDGE_WS_TIMEOUT', ...meta() });
     }, 12000);
 
     socket.onopen = () => {
       clearTimeout(timer);
+      opened = true;
       if (settled) return;
       settled = true;
       log('ws open');
-      sendResponse({ ok: true });
+      sendResponse({ ok: true, opened: true });
     };
     socket.onmessage = (ev) => {
       if (ws !== socket) return;
       if (typeof ev.data === 'string') handleText(ev.data);
-      else handleBinary(ev.data);
+      else {
+        try { bytes += ev.data.byteLength || 0; } catch {}
+        handleBinary(ev.data);
+      }
     };
     socket.onerror = () => {
       if (ws !== socket) return;
-      engineLog('ws-error', { online: typeof navigator !== 'undefined' ? navigator.onLine : null });
+      engineLog('ws-error', { online: typeof navigator !== 'undefined' ? navigator.onLine : null, ...meta() });
       if (!settled) {
         settled = true;
         clearTimeout(timer);
-        sendResponse({ ok: false, error: 'EDGE_WS_ERROR' });
+        sendResponse({ ok: false, error: 'EDGE_WS_ERROR', ...meta() });
       }
-      resetSocket('EDGE_WS_ERROR');
+      resetSocket('EDGE_WS_ERROR', meta());
     };
     socket.onclose = (e) => {
       if (ws !== socket) return;
@@ -734,14 +742,15 @@
         code: Number(e?.code) || 0,
         reason: String(e?.reason || '').slice(0, 200),
         online: typeof navigator !== 'undefined' ? navigator.onLine : null,
+        ...meta(),
       });
       const err = `EDGE_WS_CLOSED:${Number(e?.code) || 0}`;
       if (!settled) {
         settled = true;
         clearTimeout(timer);
-        sendResponse({ ok: false, error: err });
+        sendResponse({ ok: false, error: err, ...meta() });
       }
-      resetSocket(err);
+      resetSocket(err, meta());
     };
   }
 

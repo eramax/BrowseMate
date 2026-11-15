@@ -49,6 +49,8 @@ export interface TtsStartResult {
   fallback?: boolean;
   playbackId?: string;
   voiceId?: string;
+  /** مهلة مقترحة قبل إعادة المحاولة عند rate-limit */
+  retryAfterMs?: number;
 }
 
 export interface TtsEngineRequest {
@@ -65,6 +67,7 @@ export interface TtsEngineResult {
   ok: boolean;
   error?: string;
   voice?: string;
+  retryAfterMs?: number;
 }
 
 export interface TtsEngine {
@@ -333,6 +336,7 @@ export function createTtsController(deps: TtsControllerDeps) {
         edgeError: started.error,
         playbackId,
         voiceId,
+        retryAfterMs: started.retryAfterMs,
       };
     }
 

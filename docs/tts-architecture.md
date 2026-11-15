@@ -115,14 +115,15 @@ controller plays them as a **playlist**: the first segment starts immediately, t
 are prefetched, and `end` advances to the next segment with the same `voiceId`. The card
 stays one message; its text is the full original text.
 
-## Warm engine and caching
+## Engine lifetime and caching
 
 The Edge engine runs in a hidden iframe **inside the side panel**, not in a `chrome.offscreen`
 document. The iframe has an ordinary page lifetime: it exists exactly as long as the panel,
 so there is no 30-second `AUDIO_PLAYBACK` shutdown, no silent keepalive audio, and no
-offscreen message channel. The iframe connects a direct Port to the SW at load and the SW
-opens the Edge WebSocket immediately. First playback after a long idle is just the first
-segment synthesis (~1-3s in testing, depending on text length/network).
+offscreen message channel. The iframe connects a direct Port to the SW at load, but the SW does **not**
+open the Edge WebSocket until the first `edge-speak`. Edge closes idle sockets and limits
+connection volume, so there is no warm-up connection to leak or expire. First playback pays
+one handshake (~200-400ms) plus the first segment synthesis.
 
 Synthesized audio is cached in the iframe by `text|voice|rate` (LRU 48). Replays and
 downloads reuse cached segments. The cache is in-memory and survives normal stop/play, but
@@ -140,28 +141,41 @@ Each voice card has:
 
 ## Edge transport
 
-Edge’s speech endpoint rejects Chrome’s `User-Agent`. The first implementation spoofed it
-with `chrome.debugger.attach` + `Network.setUserAgentOverride` for every connection. That
-was the source of several failures:
-
-- `Another debugger is already attached` when DevTools or another tool was attached.
-- attach/detach races between paragraphs and speed changes.
-- a browser-wide “started debugging” infobar.
-- 5 ms fallbacks that left the browser default voice reading only digits.
-
-The current implementation installs a **declarativeNetRequest session rule** once per
-browser session:
+Since October 2026 the legacy synthesis host is being retired:
+`speech.platform.bing.com` answers with **403** in many countries, and in others it accepts
+the WebSocket upgrade and then closes it (**1006**) without sending audio. Edge 155+
+synthesizes through:
 
 ```
-id: 910731
-condition: urlFilter ||speech.platform.bing.com, resourceTypes [websocket, xmlhttprequest]
-action: modifyHeaders user-agent = Edge UA
+wss://api.msedgeservices.com/tts/cognitiveservices/websocket/v1
+  ?Ocp-Apim-Subscription-Key=<legacy trusted client token>
+  &Sec-MS-GEC=<legacy token>
+  &Sec-MS-GEC-Version=2-143.0.3650.96
+  &ConnectionId=<uuid>
 ```
 
-Verified end-to-end: the panel iframe `navigator.userAgent` stays Chrome, while the Edge
-WebSocket handshake succeeds. No debugger is involved in TTS. (`debugger` remains in the
-manifest only for `inspect_code` and `export_pdf`, and those two now share a
-`withDebugger` lock.)
+The audio is the same MP3 (24 kHz mono). The voice list still answers on the legacy host,
+so `fetchEdgeVoices` is unchanged.
+
+The new endpoint rejects Chrome’s `User-Agent` (403) but accepts the Edge UA. Two
+`declarativeNetRequest` session rules are installed at the maximum priority:
+
+```
+id: 910731  urlFilter ||speech.platform.bing.com   UA = Edge
+id: 910732  urlFilter ||api.msedgeservices.com     UA = Edge
+priority: 2147483647
+resourceTypes: [websocket, xmlhttprequest]
+```
+
+The max priority is deliberate: other extensions (e.g. User Agent Switcher) can set a
+`User-Agent` rule at priority 110, which would otherwise win and make Edge return 403. The
+rules are verified on every connection; if they are missing or have the wrong UA/priority
+they are re-added. A handshake rejection forces a remove+add before the retry.
+
+The engine logs `ws-close` with `opened`, `bytes`, and `ageMs`. If the server accepts
+the handshake then closes with no audio twice in a row, the SW opens a 60-second circuit
+breaker and returns `EDGE_SERVICE_UNAVAILABLE` instead of hammering the endpoint. The old
+debugger-based approach is gone; no debugger is involved in TTS.
 
 ## Panel engine protocol and races
 

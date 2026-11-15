@@ -77,15 +77,38 @@ Long sessions rendered up to 200 markdown messages.
 - panel-hosted iframe engine through a dedicated Port; no `chrome.offscreen`
 - `voiceId` binds live and saved cards; one card per reply; text view + complete MP3 download
 
+## Fixed in 0.5.1 — Edge endpoint migration
+
+The 0.5.0 TTS failures (`EDGE_WS_CLOSED:1006`, no audio) were not caused by the panel
+iframe or the user's profile. The legacy synthesis host `speech.platform.bing.com` is being
+retired: it returns 403 in many countries, and in our region it accepts the WebSocket
+upgrade and then closes it without audio. Evidence: a raw Node WebSocket, the Python
+`edge-tts` 7.3.1 client, direct connections and Tor all failed the same way, while the
+voice list still returned HTTP 200.
+
+0.5.1 fixes this by synthesizing through the Edge 155+ host:
+
+- `wss://api.msedgeservices.com/tts/cognitiveservices/websocket/v1` with
+  `Ocp-Apim-Subscription-Key=<legacy trusted token>` and the legacy `Sec-MS-GEC` token;
+- the voice list stays on the legacy host;
+- Edge-UA DNR rules for both hosts at priority `2147483647`, verified on every connect and
+  force-re-added after a handshake rejection (other UA extensions use priority 110);
+- no idle warm-up connection; the WS opens on the first actual speak;
+- a 60-second circuit breaker after two server-side closes, with
+  `EDGE_SERVICE_UNAVAILABLE` and a clear user-facing message instead of repeated retries;
+- `ws-close` diagnostics now include `opened`, `bytes`, and `ageMs`.
+
+Verified in a real side panel: a 101 handshake to `api.msedgeservices.com`, 48 audio frames
+received, and an 810-character Arabic text played and exported as one 436 KB MP3.
+
 ## Remaining high-priority work
 
-1. **TTS provider resilience.** Edge is an unofficial cloud endpoint. The latest session
-   failed with `EDGE_WS_CLOSED` then `EDGE_TIMEOUT` before any audio. We now log WS close
-   code/reason. A production design needs:
+1. **TTS provider resilience.** The legacy-host retirement is fixed, but Edge remains an
+   unofficial cloud endpoint. A production design still needs:
    - a provider interface (Edge / local offline / system)
-   - circuit breaker + backoff
-   - optional local Arabic fallback (Piper/ONNX/WASM) instead of silence
-   - diagnostics visible in Settings
+   - the circuit breaker + backoff now implemented, surfaced in Settings
+   - an explicit local Arabic fallback (Piper/ONNX/WASM) only if the user opts in
+   - diagnostics visible in Settings (endpoint, close code, opened/bytes/ageMs)
 2. **`chrome.ttsEngine` spike.** Chrome's `onSpeakWithAudioStream` was verified in a POC:
    Chrome registers the voice and plays the stream, with start/end events. This can remove
    the panel iframe and allow background/browser-TTS use, but needs:

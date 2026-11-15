@@ -12,7 +12,9 @@ export interface EdgeVoice {
 }
 
 const TOKEN = '6A5AA1D4EAFF4E9FB37E23D68491D6F4';
-const WSS_BASE = 'wss://speech.platform.bing.com/consumer/speech/synthesize/readaloud/edge/v1';
+// الخادم القديم speech.platform.bing.com يرفض التركيب منذ أكتوبر 2026.
+// Edge 155+ يستخدم api.msedgeservices.com بنفس التوكن القديم كمفتاح اشتراك.
+const WSS_BASE = 'wss://api.msedgeservices.com/tts/cognitiveservices/websocket/v1';
 const VOICES_URL = 'https://speech.platform.bing.com/consumer/speech/synthesize/readaloud/voices/list';
 const SEC_MS_GEC_VERSION = '2-143.0.3650.96';
 const EDGE_UA =
@@ -21,6 +23,15 @@ const COPYRIGHT = 'Copyright (C) Microsoft Corporation. All rights reserved.';
 const CACHE_KEY = 'edgeVoicesV1';
 const CACHE_TTL = 24 * 60 * 60 * 1000;
 const UA_RULE_ID = 910731;
+const UA_RULE_ID_NEW = 910732;
+// أعلى أولوية ممكنة: أي إضافة أخرى (مثل User Agent Switcher) قد تغيّر
+// user-agent بقاعدة priority=110، وعندها يرفض Edge الاتصال. الأولوية
+// القصوى تجعل قاعدتنا هي الفائزة.
+const UA_RULE_PRIORITY = 2_147_483_647;
+// Edge يحدّ عدد الاتصالات من نفس الشبكة. بعد فشلين متتاليين نوقف
+// المحاولات دقيقة كاملة بدل مهاجمة الخدمة (circuit breaker).
+const EDGE_RATE_RETRY_MS = 5_000;
+const EDGE_COOLDOWN_MS = 60_000;
 
 const SWAP_FIRST_WORD = { swappedWord: 0xef0569fb, swappedSum: 0x76f50f34, swappedProduct: 0xc3efea97 };
 const SWAP_SECOND_WORD = { swappedWord: 0xc31713db, swappedSum: 0x1881ce3c, swappedProduct: 0x35bd1ec9 };
@@ -28,9 +39,10 @@ const MIX_FIRST_WORD = [0xcf98b111, 0x87085b9f, 0x12ceb96d, 0x257e1d83];
 const MIX_SECOND_WORD = [0xa27416f5, 0xd38396ff, 0x7c932b89, 0xbfa49f69];
 
 let memoryVoices: EdgeVoice[] | null = null;
-let connecting: Promise<{ ok: boolean; error?: string }> | null = null;
+let connecting: Promise<EdgeConnectResult> | null = null;
 // timestamp-based حتى يبقى متزايداً عبر إعادة تشغيل الـ service worker
 let edgeEpoch = Date.now();
+let edgeCooldownUntil = 0;
 let uaRule: Promise<void> | null = null;
 
 function sleep(ms: number): Promise<void> {
@@ -39,6 +51,26 @@ function sleep(ms: number): Promise<void> {
 
 function msgOf(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
+}
+
+export interface EdgeConnectResult {
+  ok: boolean;
+  error?: string;
+  /** هل نجح handshake ثم أُغلق الاتصال؟ (مؤشر rate-limit وليس UA) */
+  opened?: boolean;
+  bytes?: number;
+  retryAfterMs?: number;
+}
+
+function cooldownResult(): EdgeConnectResult | null {
+  const left = edgeCooldownUntil - Date.now();
+  if (left <= 0) return null;
+  return { ok: false, error: 'EDGE_COOLDOWN', retryAfterMs: left };
+}
+
+function startEdgeCooldown(reason: string): void {
+  edgeCooldownUntil = Date.now() + EDGE_COOLDOWN_MS;
+  void logSystemDebug('tts:edge-service-unavailable', { reason, retryAfterMs: EDGE_COOLDOWN_MS }, 'warn');
 }
 
 function toUpperHex(bytes: Uint8Array): string {
@@ -101,10 +133,10 @@ async function generateSecMsGecV2(): Promise<string> {
   return hashSecMsGecV2(`${rounded * 10_000_000}${TOKEN}`);
 }
 
-async function buildEdgeWsUrl(): Promise<string> {
+export async function buildEdgeWsUrl(): Promise<string> {
   const gec = await generateSecMsGecV2();
   const connectionId = crypto.randomUUID();
-  return `${WSS_BASE}?TrustedClientToken=${TOKEN}&Sec-MS-GEC=${gec}&Sec-MS-GEC-Version=${SEC_MS_GEC_VERSION}&ConnectionId=${connectionId}`;
+  return `${WSS_BASE}?Ocp-Apim-Subscription-Key=${TOKEN}&Sec-MS-GEC=${gec}&Sec-MS-GEC-Version=${SEC_MS_GEC_VERSION}&ConnectionId=${connectionId}`;
 }
 
 function storageGet<T>(key: string): Promise<T | undefined> {
@@ -147,47 +179,59 @@ export async function fetchEdgeVoices(force = false): Promise<EdgeVoice[]> {
 }
 
 // ===== UA override via declarativeNetRequest =====
-// صوت Edge يرفض UA الخاص بـ Chrome. القاعدة تُثبت رأس user-agent لطلبات
-// speech.platform.bing.com فقط، وتبقى طوال جلسة المتصفح.
-export async function ensureEdgeUaRule(): Promise<void> {
+// صوت Edge يرفض UA الخاص بـ Chrome. القواعد تُثبت رأس user-agent
+// لخادم الأصوات القديم وخادم التركيب الجديد، وتبقى طوال جلسة المتصفح.
+/**
+ * يثبّت قاعدة UA لأعلى أولوية. force=true يعيد إضافة القاعدة حتى لو
+ * كانت موجودة — نستخدمه بعد فشل 1006/WS_ERROR لأن إضافة أخرى قد تكون
+ * أضافت قاعدة منافسة بعد قاعدتنا.
+ */
+export async function ensureEdgeUaRule(force = false): Promise<void> {
   if (uaRule) return uaRule;
   uaRule = (async () => {
     const dnr = (chrome as any).declarativeNetRequest;
     if (!dnr?.updateSessionRules) return;
     try {
-      // لا تحذف القاعدة وتعيد إضافتها إن كانت موجودة بنفس القيمة:
-      // إعادة الإضافة تخلق نافذة قصيرة قد يفشل فيها أول اتصال بعد إعادة تشغيل الـ SW.
+      const hosts = [
+        { id: UA_RULE_ID, filter: '||speech.platform.bing.com' },
+        { id: UA_RULE_ID_NEW, filter: '||api.msedgeservices.com' },
+      ];
+      let existing: any[] = [];
       if (dnr.getSessionRules) {
         const rules = await dnr.getSessionRules();
-        const existing = Array.isArray(rules) ? rules.find((r: any) => r.id === UA_RULE_ID) : null;
-        const ua = existing?.action?.requestHeaders?.find((h: any) => h.header === 'user-agent')?.value;
-        if (ua === EDGE_UA) return;
+        existing = Array.isArray(rules) ? rules.filter((r: any) => hosts.some((h) => h.id === r.id)) : [];
       }
+      const allOk = !force && hosts.every((h) => {
+        const rule = existing.find((r: any) => r.id === h.id);
+        const ua = rule?.action?.requestHeaders?.find((x: any) => x.header === 'user-agent')?.value;
+        return ua === EDGE_UA && rule?.priority === UA_RULE_PRIORITY;
+      });
+      if (allOk) return;
       await dnr.updateSessionRules({
-        removeRuleIds: [UA_RULE_ID],
-        addRules: [
-          {
-            id: UA_RULE_ID,
-            priority: 1,
-            action: {
-              type: 'modifyHeaders',
-              requestHeaders: [{ header: 'user-agent', operation: 'set', value: EDGE_UA }],
-            },
-            condition: {
-              urlFilter: '||speech.platform.bing.com',
-              resourceTypes: ['websocket', 'xmlhttprequest'],
-            },
+        removeRuleIds: hosts.map((h) => h.id),
+        addRules: hosts.map((h) => ({
+          id: h.id,
+          priority: UA_RULE_PRIORITY,
+          action: {
+            type: 'modifyHeaders',
+            requestHeaders: [{ header: 'user-agent', operation: 'set', value: EDGE_UA }],
           },
-        ],
+          condition: {
+            urlFilter: h.filter,
+            resourceTypes: ['websocket', 'xmlhttprequest'],
+          },
+        })),
       });
       // امنح DNR لحظة لتطبيق القاعدة قبل أول handshake
       await sleep(60);
+      void logSystemDebug('tts:ua-rule', { priority: UA_RULE_PRIORITY, forced: force, rules: existing.length }, 'info');
     } catch (e) {
-      uaRule = null;
-      void logSystemDebug('tts:ua-rule-failed', { error: msgOf(e) }, 'warn');
+      void logSystemDebug('tts:ua-rule-failed', { error: msgOf(e), forced: force }, 'warn');
     }
   })().finally(() => {
-    // أبقِ الوعد المحلول: القاعدة تُثبّت مرة واحدة لكل جلسة SW
+    // لا نُبقي الوعد: كل اتصال يتحقق من القاعدة again، لأن إضافة أخرى
+    // قد تحذفها أو تتجاوزها أثناء عمل الـ SW.
+    uaRule = null;
   });
   return uaRule;
 }
@@ -231,8 +275,8 @@ export function registerEnginePort(p: chrome.runtime.Port): boolean {
       for (const id of [...engineWaiters.keys()]) settleWaiter(id, { ok: false, error: 'NO_TTS_PANEL' });
     }
   });
-  // تسخين فوري: اتصال WS قبل أول طلب
-  void ensureEdgeConnected().catch(() => {});
+  // لا نسخّن اتصالاً عند فتح البانل: Edge يحدّ الاتصالات، والاتصال
+  // الخامل يُغلق غالباً. نفتح اتصالاً واحداً عند أول طلب فعلي.
   return replaced;
 }
 
@@ -251,9 +295,11 @@ function sendEngine(msg: Record<string, unknown>, timeoutMs = 15_000): Promise<a
 }
 
 /** يتصل بـ Edge WS. القاعدة تثبت UA، لذا لا حاجة لأي debugger. */
-export async function ensureEdgeConnected(): Promise<{ ok: boolean; error?: string }> {
+export async function ensureEdgeConnected(): Promise<EdgeConnectResult> {
+  const cool = cooldownResult();
+  if (cool) return cool;
   if (connecting) return connecting;
-  let p: Promise<{ ok: boolean; error?: string }>;
+  let p: Promise<EdgeConnectResult>;
   p = (async () => {
     if (!enginePort) return { ok: false, error: 'NO_TTS_PANEL' };
     await ensureEdgeUaRule();
@@ -261,7 +307,9 @@ export async function ensureEdgeConnected(): Promise<{ ok: boolean; error?: stri
     if (!state?.ok) return { ok: false, error: state?.error || 'NO_TTS_PANEL' };
     if (state.open) return { ok: true };
     const res = await sendEngine({ type: 'edge-connect', wsUrl: await buildEdgeWsUrl() }, 20_000);
-    if (!res?.ok) return { ok: false, error: res?.error || 'EDGE_CONNECT_FAILED' };
+    if (!res?.ok) {
+      return { ok: false, error: res?.error || 'EDGE_CONNECT_FAILED', opened: res?.opened, bytes: res?.bytes };
+    }
     console.log('[EdgeTTS] websocket connected');
     return { ok: true };
   })().finally(() => {
@@ -272,19 +320,19 @@ export async function ensureEdgeConnected(): Promise<{ ok: boolean; error?: stri
 }
 
 /** إعادة فتح الـ WS دون إعادة إنشاء المحرك أو مسح الكاش. */
-export async function resetEdgeConnection(): Promise<{ ok: boolean; error?: string }> {
+export async function resetEdgeConnection(): Promise<EdgeConnectResult> {
   connecting = null;
   await sendEngine({ type: 'edge-reset' }, 3000);
-  await sleep(60);
+  await sleep(400);
   return ensureEdgeConnected();
 }
 
 /** إعادة ضبط المحرك — أغلق/أعد فتح WS فقط. */
-export async function resetEdge(): Promise<{ ok: boolean; error?: string }> {
+export async function resetEdge(): Promise<EdgeConnectResult> {
   connecting = null;
   const epoch = ++edgeEpoch;
   await sendEngine({ type: 'edge-stop', epoch }, 3000);
-  await sleep(60);
+  await sleep(600);
   return ensureEdgeConnected();
 }
 
@@ -296,16 +344,36 @@ export async function edgeSpeak(
   key = '',
   prefetch: Array<{ key: string; text: string }> = [],
   playbackId = '',
-): Promise<{ ok: boolean; error?: string; voice?: string }> {
-  let epoch = edgeEpoch;
+): Promise<{ ok: boolean; error?: string; voice?: string; retryAfterMs?: number }> {
+  const epoch = edgeEpoch;
+  if (epoch !== edgeEpoch) return { ok: false, error: 'EDGE_STOPPED' };
+
+  const cool = cooldownResult();
+  if (cool) return { ok: false, error: 'EDGE_COOLDOWN', retryAfterMs: cool.retryAfterMs };
+
   let connect = await ensureEdgeConnected();
-  if (!connect.ok && isConnectionError(connect.error)) {
-    void logSystemDebug('tts:edge-retry', { stage: 'connect', error: connect.error }, 'warn');
-    await sleep(150);
-    connect = await resetEdgeConnection();
+  if (!connect.ok) {
+    if (connect.error === 'EDGE_COOLDOWN') {
+      return { ok: false, error: 'EDGE_COOLDOWN', retryAfterMs: connect.retryAfterMs };
+    }
+    const rejected = connect.opened === false;
+    void logSystemDebug('tts:edge-retry', { stage: 'connect', error: connect.error, rejected }, 'warn');
+    if (rejected) {
+      // handshake فشل: غالباً UA/حجب — أعد تثبيت القاعدة.
+      await ensureEdgeUaRule(true).catch(() => {});
+      await sleep(1500);
+    } else {
+      // handshake نجح ثم أُغلق: Edge يحدّ الاتصالات — انتظر أطول.
+      await sleep(EDGE_RATE_RETRY_MS);
+    }
+    const retry = await resetEdgeConnection();
+    if (!retry.ok) {
+      if (retry.opened !== false) startEdgeCooldown('connect-retry');
+      return { ok: false, error: retry.error || connect.error, retryAfterMs: retry.retryAfterMs };
+    }
+    connect = retry;
   }
   if (epoch !== edgeEpoch) return { ok: false, error: 'EDGE_STOPPED' };
-  if (!connect.ok) return { ok: false, error: connect.error };
 
   const payload = {
     type: 'edge-speak',
@@ -321,24 +389,28 @@ export async function edgeSpeak(
 
   let res: any = await sendEngine(payload, 70_000);
   if (!res?.ok && isRetryableSpeakError(res?.error)) {
-    void logSystemDebug('tts:edge-retry', { stage: 'reconnect', error: res?.error }, 'warn');
-    await sleep(120);
+    const rejected = res?.opened === false;
+    void logSystemDebug('tts:edge-retry', { stage: 'speak', error: res?.error, rejected, opened: res?.opened }, 'warn');
+    if (rejected) {
+      await ensureEdgeUaRule(true).catch(() => {});
+      await sleep(1500);
+    } else {
+      await sleep(EDGE_RATE_RETRY_MS);
+    }
     const retry = await resetEdgeConnection();
-    if (!retry.ok) return { ok: false, error: retry.error };
+    if (!retry.ok) {
+      if (retry.opened !== false) startEdgeCooldown('speak-reconnect');
+      return { ok: false, error: retry.error || 'EDGE_CONNECT_FAILED', retryAfterMs: retry.retryAfterMs };
+    }
     if (epoch !== edgeEpoch) return { ok: false, error: 'EDGE_STOPPED' };
     res = await sendEngine(payload, 70_000);
-  }
-  if (!res?.ok && isRetryableSpeakError(res?.error)) {
-    void logSystemDebug('tts:edge-retry', { stage: 'recreate', error: res?.error }, 'warn');
-    await sleep(120);
-    const beforeReset = edgeEpoch;
-    const retry = await resetEdge();
-    if (!retry.ok) return { ok: false, error: retry.error };
-    // resetEdge يزيد epoch مرة واحدة. لو زاد أكثر فهذا يعني أن المستخدم أوقف/بدأ تشغيلاً جديداً.
-    if (edgeEpoch !== beforeReset + 1) return { ok: false, error: 'EDGE_STOPPED' };
-    epoch = edgeEpoch;
-    payload.epoch = epoch;
-    res = await sendEngine(payload, 70_000);
+    if (!res?.ok && isRetryableSpeakError(res?.error)) {
+      // فشل ثانٍ: لا محاولة ثالثة. أوقف الاتصالات دقيقة إن كان handshake قد نجح.
+      if (res?.opened !== false) {
+        startEdgeCooldown('speak-retry');
+        return { ok: false, error: 'EDGE_SERVICE_UNAVAILABLE', retryAfterMs: EDGE_COOLDOWN_MS };
+      }
+    }
   }
   if (epoch !== edgeEpoch) return { ok: false, error: 'EDGE_STOPPED' };
   if (!res?.ok) {

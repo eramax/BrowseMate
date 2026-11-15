@@ -122,10 +122,22 @@ register({
             : {}),
         };
       }
-      return {
-        ...res,
-        message: res?.message || `تعذر تشغيل صوت Edge (${res?.error || 'خطأ'}). لم يتم استخدام صوت المتصفح — أبلغ المستخدم بالخطأ.`,
-      };
+      const err = String(res?.error || '');
+      let hint = '';
+      if (err === 'EDGE_COOLDOWN' || err === 'EDGE_SERVICE_UNAVAILABLE') {
+        const wait = res?.retryAfterMs ? Math.max(1, Math.ceil(res.retryAfterMs / 1000)) : 60;
+        hint = ` خدمة Microsoft Edge الصوتية رفضت الاتصال من الخادم (وليست مشكلة في جهازك). أُوقفت المحاولات ${wait} ثانية لتجنب إرهاق الخدمة؛ أعد المحاولة لاحقاً.`;
+      } else if (err === 'EDGE_WS_CLOSED:1006') {
+        hint = ' خدمة Edge أغلقت الاتصال بعد إنشائه دون إرسال صوت — عطل مؤقت من الخادم. انتظر دقيقة ثم أعد المحاولة.';
+      } else if (/EDGE_WS_ERROR|EDGE_WS_TIMEOUT|EDGE_CONNECT_FAILED/.test(err)) {
+        hint = ' قد تكون إضافة أخرى تغيّر User-Agent (مثل User Agent Switcher) أو حجب من VPN/بروكسي.';
+      } else if (/EDGE_TIMEOUT/.test(err)) {
+        hint = ' انتهت مهلة الاتصال بخدمة Edge.';
+      } else if (err === 'NO_TTS_PANEL') {
+        hint = ' محرك الصوت غير متصل؛ أعد فتح البانل.';
+      }
+      const base = res?.message || `تعذر تشغيل صوت Edge (${err || 'خطأ'}). لم يتم استخدام صوت المتصفح — أبلغ المستخدم بالخطأ.`;
+      return { ...res, message: `${base}${hint}`.trim() };
     }
 
     const tabId = await resolveTabId(a.tabId, ctx);
