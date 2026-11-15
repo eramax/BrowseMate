@@ -1,4 +1,4 @@
-// محرك Microsoft Edge Read Aloud داخل offscreen document مخفي.
+// محرك Microsoft Edge Read Aloud داخل iframe في البانل (ليس offscreen API).
 // - يستقبل WS URL من الـ SW بعد تثبيت UA عبر declarativeNetRequest.
 // - يركّب SSML، يجمع MP3 + WordBoundary، يشغّل الصوت ويرسل أحداث الكلمات.
 // - يسبق تجهيز الفقرتين التاليتين (prefetch) فيخزّنهما ويشغّلهما فوراً.
@@ -30,6 +30,29 @@
   let currentKey = '';
   let currentPlaybackId = '';
   let currentEpoch = 0;
+  /** Port مباشر مع SW — لا chrome.offscreen ولا رسائل عامة */
+  let enginePort = null;
+
+  function postToSw(msg) {
+    try { enginePort?.postMessage(msg); } catch {}
+  }
+
+  function connectEnginePort() {
+    try {
+      enginePort = chrome.runtime.connect({ name: 'tts-engine' });
+      enginePort.onMessage.addListener((msg) => {
+        const respond = (res) => postToSw({ type: 'edge-result', id: msg?.id, res });
+        handleEngineMessage(msg, respond);
+      });
+      enginePort.onDisconnect.addListener(() => {
+        enginePort = null;
+        setTimeout(connectEnginePort, 150);
+      });
+      postToSw({ type: 'engine-ready' });
+    } catch {
+      setTimeout(connectEnginePort, 500);
+    }
+  }
   /**
    * @type {null | {
    *   requestId:string, text:string, voice:string, rate:number, tabId:number|null,
@@ -116,10 +139,7 @@
   }
 
   function sendMessage(msg) {
-    try {
-      const p = chrome.runtime.sendMessage(msg);
-      if (p && typeof p.catch === 'function') p.catch(() => {});
-    } catch {}
+    postToSw(msg);
   }
 
   function sendEvent(type, extra) {
@@ -484,58 +504,6 @@
 
 
 
-  // ===== keepalive for export =====
-  // Chrome يغلق offscreen بسبب AUDIO_PLAYBACK بعد 30 ثانية بلا صوت.
-  // التصدير يركّب الصوت دون تشغيله، لذا نشغّل WAV صامتاً أثناءه.
-  let keepAliveAudio = null;
-  let keepAliveUrl = '';
-  function silentWavUrl() {
-    if (keepAliveUrl) return keepAliveUrl;
-    const sampleRate = 8000;
-    const dataSize = sampleRate;
-    const buf = new ArrayBuffer(44 + dataSize);
-    const dv = new DataView(buf);
-    const str = (off, s) => { for (let i = 0; i < s.length; i++) dv.setUint8(off + i, s.charCodeAt(i)); };
-    str(0, 'RIFF'); dv.setUint32(4, 36 + dataSize, true); str(8, 'WAVE'); str(12, 'fmt ');
-    dv.setUint32(16, 16, true); dv.setUint16(20, 1, true); dv.setUint16(22, 1, true);
-    dv.setUint32(24, sampleRate, true); dv.setUint32(28, sampleRate, true);
-    dv.setUint16(32, 1, true); dv.setUint16(34, 8, true); str(36, 'data'); dv.setUint32(40, dataSize, true);
-    new Uint8Array(buf, 44).fill(0x80);
-    keepAliveUrl = URL.createObjectURL(new Blob([buf], { type: 'audio/wav' }));
-    return keepAliveUrl;
-  }
-  const keepAliveReasons = new Set();
-  function startKeepAlive() {
-    try {
-      if (!keepAliveAudio) {
-        keepAliveAudio = new Audio();
-        keepAliveAudio.loop = true;
-        keepAliveAudio.volume = 0;
-        keepAliveAudio.style.display = 'none';
-        document.body.appendChild(keepAliveAudio);
-      }
-      keepAliveAudio.src = silentWavUrl();
-      void keepAliveAudio.play().catch(() => {});
-    } catch {}
-  }
-  function stopKeepAlive() {
-    try {
-      if (keepAliveAudio) {
-        keepAliveAudio.pause();
-        keepAliveAudio.removeAttribute('src');
-        keepAliveAudio.load();
-      }
-    } catch {}
-  }
-  function acquireKeepAlive(reason) {
-    keepAliveReasons.add(reason);
-    startKeepAlive();
-  }
-  function releaseKeepAlive(reason) {
-    keepAliveReasons.delete(reason);
-    if (!keepAliveReasons.size) stopKeepAlive();
-  }
-
   // ===== export (download) =====
   function bytesToBase64(bytes) {
     let binary = '';
@@ -572,7 +540,6 @@
       return;
     }
     exporting = true;
-    acquireKeepAlive('export');
     log('export start', items.length);
     try {
       const parts = [];
@@ -598,7 +565,6 @@
       log('export failed', e && e.message ? e.message : String(e));
       sendResponse({ ok: false, error: e && e.message ? e.message : String(e) });
     } finally {
-      releaseKeepAlive('export');
       exporting = false;
     }
   }
@@ -772,8 +738,8 @@
     resetSocket('EDGE_STOPPED');
   }
 
-  chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
-    if (!msg || msg.target !== 'offscreen') return;
+  function handleEngineMessage(msg, sendResponse) {
+    if (!msg) return;
     switch (msg.type) {
       case 'edge-connect':
         connect(msg, sendResponse);
@@ -840,21 +806,14 @@
       case 'edge-export':
         void exportAudio(Array.isArray(msg.items) ? msg.items : [], String(msg.voice || ''), Number(msg.rate) || 1, sendResponse);
         return true;
-      case 'edge-warm':
-        acquireKeepAlive('panel');
-        sendResponse({ ok: true });
-        return true;
-      case 'edge-cold':
-        releaseKeepAlive('panel');
-        sendResponse({ ok: true });
-        return true;
       case 'edge-ping':
         sendResponse({ ok: true, tag: TAG });
         return true;
       default:
         return;
     }
-  });
+  }
 
-  log('offscreen ready');
+  connectEnginePort();
+  log('edge engine ready');
 })();

@@ -8,7 +8,7 @@ The earlier implementation kept playback state in several places at once:
 - `tts.ts` had another active tab.
 - `tts-session.ts` had a panel state.
 - the content-script player had its own state.
-- the offscreen document had its own pending/audio state.
+- the hidden audio document had its own pending/audio state.
 - the panel had a temporary player plus saved voice cards.
 
 That made failures look random: a tab navigation could stop text-only speech, a page `stop`
@@ -53,10 +53,10 @@ Service worker
   tts-controller.ts   pure state machine: start / stop / pause / seek / events
   tts-voice.ts        pure language + voice selection
   tts.ts              chrome.tts engine (browser voices)
-  edge.ts             Edge protocol, DNR UA rule, offscreen lifecycle
-        │  runtime messages (target: offscreen)
+  edge.ts             Edge protocol, DNR UA rule, engine Port transport
+        │  Port (tts-engine)
         ▼
-Offscreen document (public/offscreen.js)
+Panel iframe (public/tts-engine.js)
   WebSocket + SSML + MP3 assembly + audio + prefetch cache
 ```
 
@@ -117,26 +117,26 @@ stays one message; its text is the full original text.
 
 ## Warm engine and caching
 
-While the side panel is open, the SW keeps the offscreen document and Edge WebSocket warm
-and runs a silent looping WAV in the offscreen document. Chrome closes an `AUDIO_PLAYBACK`
-offscreen document after 30 seconds without audio; the silent loop prevents that. First
-playback after a long idle is then just the first segment synthesis (~1s in testing).
-`edge-cold` is sent when the last panel closes.
+The Edge engine runs in a hidden iframe **inside the side panel**, not in a `chrome.offscreen`
+document. The iframe has an ordinary page lifetime: it exists exactly as long as the panel,
+so there is no 30-second `AUDIO_PLAYBACK` shutdown, no silent keepalive audio, and no
+offscreen message channel. The iframe connects a direct Port to the SW at load and the SW
+opens the Edge WebSocket immediately. First playback after a long idle is just the first
+segment synthesis (~1-3s in testing, depending on text length/network).
 
-Synthesized audio is cached in the offscreen document by
-`text|voice|rate` (LRU 48). Replays and downloads reuse cached segments. The cache is
-in-memory and survives normal stop/play, but not a browser/extension restart; a new unique
-text is always synthesized once.
+Synthesized audio is cached in the iframe by `text|voice|rate` (LRU 48). Replays and
+downloads reuse cached segments. The cache is in-memory and survives normal stop/play, but
+not a panel reload/browser restart; a new unique text is always synthesized once.
 
 ## Download and transcript
 
 Each voice card has:
 - **Show text** (📄): expands the full text, scrollable and selectable, with a text download.
 - **Download audio** (⬇): the SW splits the saved text again, reuses cached segments or
-  synthesizes missing ones in the offscreen document, merges all MP3 segments, and downloads
-  one complete MP3 via `chrome.downloads`. Long exports run over the panel Port (not a
-  one-shot RPC) so they are not cut by message timeouts. The silent keepalive covers exports
-  longer than 30 seconds.
+  synthesizes missing ones in the panel iframe, merges all MP3 segments, and downloads one
+  complete MP3 via `chrome.downloads`. Long exports run over the panel Port (not a one-shot
+  RPC) so they are not cut by message timeouts. The iframe does not expire while the panel
+  is open, so exports have no 30-second limit.
 
 ## Edge transport
 
@@ -158,12 +158,12 @@ condition: urlFilter ||speech.platform.bing.com, resourceTypes [websocket, xmlht
 action: modifyHeaders user-agent = Edge UA
 ```
 
-Verified end-to-end: the offscreen `navigator.userAgent` stays Chrome, while the Edge
+Verified end-to-end: the panel iframe `navigator.userAgent` stays Chrome, while the Edge
 WebSocket handshake succeeds. No debugger is involved in TTS. (`debugger` remains in the
 manifest only for `inspect_code` and `export_pdf`, and those two now share a
 `withDebugger` lock.)
 
-## Offscreen protocol and races
+## Panel engine protocol and races
 
 Operations: `edge-connect`, `edge-speak`, `edge-halt`, `edge-reset`, `edge-stop`,
 `edge-pause`, `edge-resume`, `edge-seek`, `edge-state`, `edge-ping`.
@@ -194,7 +194,7 @@ For Edge playback:
 
 1. Reuse an open WS, otherwise `edge-connect`.
 2. On channel/WS errors, `edge-reset` (reconnect, keep the document) and retry once.
-3. On another connection error, recreate the offscreen document and retry once.
+3. On another connection error, reset the Port engine/WebSocket and retry once.
 4. If Edge still fails, return a clear error (`EDGE_*` / `edgeError`). Do **not** use a
    browser voice and do **not** save a voice message.
 
@@ -208,8 +208,7 @@ result stores those values.
 - On port connect the SW sends the current state immediately, so reopening the panel while
   audio is playing restores the card.
 - If the SW restarted, the live state is intentionally ephemeral; the durable source is the
-  saved `VoiceMessage` in the assistant message. `initTtsLifecycle` stops orphaned offscreen
-  audio after a restart.
+  saved `VoiceMessage` in the assistant message. `initTtsLifecycle` stops orphaned engine audio after a restart.
 - The composer, queue, and run events are session-filtered in `App.svelte`.
 
 ## Tests

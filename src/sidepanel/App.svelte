@@ -287,6 +287,15 @@
 </script>
 
 <div class="app" {dir}>
+  <!-- محرك Edge يعمل داخل البانل نفسه. لا chrome.offscreen ولا إغلاق بعد 30 ثانية. -->
+  <iframe
+    class="tts-engine-frame"
+    src={chrome.runtime.getURL('tts-engine.html')}
+    title="BrowseMate Edge TTS"
+    allow="autoplay"
+    aria-hidden="true"
+    tabindex="-1"
+  ></iframe>
   <div class="tabs">
     {#each tabs as x (x.key)}
       <button class:active={tab === x.key} onclick={() => (tab = x.key)}>{x.label}</button>

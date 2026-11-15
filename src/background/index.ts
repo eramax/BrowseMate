@@ -9,7 +9,7 @@ import { getArtifact } from './artifacts';
 import { debugStore, logSystemDebug } from './debug';
 import { chromeKV } from '../shared/storage';
 import { getTtsVoices } from './tts';
-import { fetchEdgeVoices, ensureEdgeConnected, edgeWarm, edgeCold } from './edge';
+import { ensureEdgeConnected, fetchEdgeVoices, registerEnginePort } from './edge';
 import {
   downloadTts,
   getTtsState,
@@ -66,7 +66,7 @@ self.addEventListener('unhandledrejection', (e) => {
 
 const ports = new Set<chrome.runtime.Port>();
 let activeSessionId = '';
-let warmPanels = 0;
+let engineHost: chrome.runtime.Port | null = null;
 setTtsEmitter((state) => {
   for (const p of ports) {
     try { p.postMessage({ type: 'tts-state', state }); } catch { /* انقطع */ }
@@ -92,21 +92,29 @@ async function initLang() {
 }
 
 chrome.runtime.onConnect.addListener((p) => {
+  // iframe محرك Edge داخل البانل — Port مباشر، لا chrome.offscreen
+  if (p.name === 'tts-engine') {
+    const replaced = registerEnginePort(p);
+    if (replaced) void stopTts({ kind: 'all' });
+    engineHost = p;
+    p.onMessage.addListener((msg: any) => {
+      if (msg?.type === 'edge-event') handleEdgeEvent(msg);
+      else if (msg?.type === 'engine-ready') void ensureEdgeConnected().catch(() => {});
+    });
+    p.onDisconnect.addListener(() => {
+      if (engineHost === p) {
+        engineHost = null;
+        void stopTts({ kind: 'all' });
+      }
+    });
+    return;
+  }
   if (p.name !== 'panel') return;
   pullSkills().then(() => seedSkills()).catch((e) => { console.warn('skills init:', e); void logSystemDebug('skills:init-error', { error: e }); });
   ports.add(p);
-  p.onDisconnect.addListener(() => {
-    ports.delete(p);
-    warmPanels = Math.max(0, warmPanels - 1);
-    if (!warmPanels) void edgeCold().catch(() => {});
-  });
+  p.onDisconnect.addListener(() => { ports.delete(p); });
   // مزامنة أولية: البانل قد يُفتح بعد بدء الصوت أو بعد إعادة تشغيل الـ SW
   try { p.postMessage({ type: 'tts-state', state: getTtsState() }); } catch { /* ignore */ }
-  // تسخين اتصال Edge وإبقاء الـ offscreen حياً أثناء فتح البانل (Chrome يغلقه بعد 30ث بلا صوت)
-  warmPanels++;
-  void ensureEdgeConnected()
-    .then((r) => { if (r.ok && warmPanels > 0) void edgeWarm().catch(() => {}); })
-    .catch(() => {});
   p.onMessage.addListener((msg: PanelToWorker) => {
     if (msg.type === 'chat') {
       activeSessionId = msg.sessionId;
@@ -161,8 +169,6 @@ function emit(sessionId: string, evt: WorkerToPanel) {
 
 // ===== RPC بسيط للطلبات غير المتدفقة (إعدادات/جلسات/مهارات) =====
 chrome.runtime.onMessage.addListener((msg: any, sender, send) => {
-  // رسائل الـ offscreen لها target خاص — لا يعالجها الـ SW
-  if (msg?.target === 'offscreen') return;
   if (msg?.target === 'sw') {
     if (msg.type === 'edge-event') handleEdgeEvent(msg);
     send({ ok: true });

@@ -107,7 +107,7 @@ export function getTtsState(): TtsPanelState {
   return controller.getState();
 }
 
-/** حدث من offscreen — يُمرر للبطاقة وللقارئ داخل الصفحة فقط إن كان للتشغيل الحالي. */
+/** حدث من محرك Edge داخل البانل — يُمرر للبطاقة وللقارئ داخل الصفحة فقط إن كان للتشغيل الحالي. */
 export function handleEdgeEvent(msg: any): void {
   const event = msg?.event;
   if (!event) return;
@@ -265,6 +265,8 @@ export async function downloadTts(
   const clean = String(text || '').trim();
   if (!clean) return { ok: false, error: 'EMPTY_TEXT' };
   await stopTts({ kind: 'all' });
+  // نظّف أي prefetch/تشغيل عالق قبل التصدير (بدون مسح الكاش)
+  await edgeHalt();
   const rateValue = Number(rate) || 1;
   const edgeVoice = edgeVoiceFor(clean, voice);
   const segments = buildSpeechSegments(clean, edgeVoice, rateValue);
