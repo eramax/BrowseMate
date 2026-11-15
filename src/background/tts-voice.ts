@@ -23,9 +23,10 @@ export function detectTextLang(text: string): TextLang {
   return 'other';
 }
 
-/** صوت Edge الافتراضي حسب النص (أو الصوت المطلوب إن وُجد). */
+/** صوت Edge الافتراضي حسب النص (أو الصوت المطلوب إن كان صوت Edge صالحاً). */
 export function edgeVoiceFor(text: string, requested?: string): string {
-  if (requested) return requested;
+  // لا تمرر صوت متصفح (مثل Google UK English Female) إلى Edge؛ فهذا يغلق الاتصال
+  if (requested && /Neural$/i.test(requested)) return requested;
   const lang = detectTextLang(text);
   if (lang === 'ar') return DEFAULT_EDGE_AR;
   if (lang === 'en') return DEFAULT_EDGE_EN;

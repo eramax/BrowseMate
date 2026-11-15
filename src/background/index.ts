@@ -9,8 +9,9 @@ import { getArtifact } from './artifacts';
 import { debugStore, logSystemDebug } from './debug';
 import { chromeKV } from '../shared/storage';
 import { getTtsVoices } from './tts';
-import { fetchEdgeVoices } from './edge';
+import { fetchEdgeVoices, ensureEdgeConnected, edgeWarm, edgeCold } from './edge';
 import {
+  downloadTts,
   getTtsState,
   handleEdgeEvent,
   initTtsLifecycle,
@@ -65,6 +66,7 @@ self.addEventListener('unhandledrejection', (e) => {
 
 const ports = new Set<chrome.runtime.Port>();
 let activeSessionId = '';
+let warmPanels = 0;
 setTtsEmitter((state) => {
   for (const p of ports) {
     try { p.postMessage({ type: 'tts-state', state }); } catch { /* انقطع */ }
@@ -93,9 +95,18 @@ chrome.runtime.onConnect.addListener((p) => {
   if (p.name !== 'panel') return;
   pullSkills().then(() => seedSkills()).catch((e) => { console.warn('skills init:', e); void logSystemDebug('skills:init-error', { error: e }); });
   ports.add(p);
-  p.onDisconnect.addListener(() => { ports.delete(p); });
+  p.onDisconnect.addListener(() => {
+    ports.delete(p);
+    warmPanels = Math.max(0, warmPanels - 1);
+    if (!warmPanels) void edgeCold().catch(() => {});
+  });
   // مزامنة أولية: البانل قد يُفتح بعد بدء الصوت أو بعد إعادة تشغيل الـ SW
   try { p.postMessage({ type: 'tts-state', state: getTtsState() }); } catch { /* ignore */ }
+  // تسخين اتصال Edge وإبقاء الـ offscreen حياً أثناء فتح البانل (Chrome يغلقه بعد 30ث بلا صوت)
+  warmPanels++;
+  void ensureEdgeConnected()
+    .then((r) => { if (r.ok && warmPanels > 0) void edgeWarm().catch(() => {}); })
+    .catch(() => {});
   p.onMessage.addListener((msg: PanelToWorker) => {
     if (msg.type === 'chat') {
       activeSessionId = msg.sessionId;
@@ -110,6 +121,31 @@ chrome.runtime.onConnect.addListener((p) => {
       // زر الإيقاف يوقف أيضاً القراءة الصوتية الجارية/المعلّقة لهذه الجلسة
       const stopFor = msg.sessionId || activeSessionId;
       if (stopFor) void stopTts({ kind: 'session', sessionId: stopFor });
+    } else if (msg.type === 'tts-download') {
+      // عبر Port وليس sendMessage: التصدير الطويل قد يتجاوز مهلة رسالة الـ RPC
+      void downloadTts(msg.text, msg.voice, msg.rate, msg.sessionId)
+        .then((res) => {
+          try {
+            p.postMessage({
+              type: 'tts-download-result',
+              requestId: msg.requestId,
+              ok: Boolean(res.ok),
+              ...(res.error ? { error: res.error } : {}),
+              ...(res.filename ? { filename: res.filename } : {}),
+              ...(res.downloadId != null ? { downloadId: res.downloadId } : {}),
+            });
+          } catch { /* البانل أُغلق */ }
+        })
+        .catch((e) => {
+          try {
+            p.postMessage({
+              type: 'tts-download-result',
+              requestId: msg.requestId,
+              ok: false,
+              error: e instanceof Error ? e.message : String(e),
+            });
+          } catch { /* ignore */ }
+        });
     } else if (msg.type === 'session-switch') {
       activeSessionId = msg.sessionId;
       setTtsChatSession(msg.sessionId);
@@ -153,7 +189,7 @@ chrome.runtime.onMessage.addListener((msg: any, sender, send) => {
           break;
         }
         case 'tts-speak-text':
-          send(await speakTextDirect(String(msg.text || ''), msg.voice, msg.rate, msg.engine, msg.sessionId, msg.voiceId, Boolean(msg.replay)));
+          send(await speakTextDirect(String(msg.text || ''), msg.voice, msg.rate, 'edge', msg.sessionId, msg.voiceId, Boolean(msg.replay)));
           break;
         case 'tts-replay':
           send(await replayTts(String(msg.sessionId || '')));
@@ -179,6 +215,9 @@ chrome.runtime.onMessage.addListener((msg: any, sender, send) => {
         }
         case 'tts-status':
           send({ ok: true, state: getTtsState() });
+          break;
+        case 'tts-download':
+          send(await downloadTts(String(msg.text || ''), msg.voice, msg.rate, msg.sessionId));
           break;
         case 'tts-seek':
           send({ ok: seekTts(Number(msg.time) || 0, String(msg.sessionId || '')) });

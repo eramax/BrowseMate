@@ -47,6 +47,7 @@ export type PanelToWorker =
     }
   | { type: 'approval-response'; id: string; approved: boolean }
   | { type: 'stop'; sessionId?: string }
+  | { type: 'tts-download'; requestId: string; text: string; voice: string; rate: number; sessionId: string }
   | { type: 'session-switch'; sessionId: string };
 
 /** حالة مشغّل الصوت داخل البانل (Edge/المتصفح) */
@@ -87,6 +88,7 @@ export type WorkerToPanel =
   | { type: 'error'; runId?: string; message: string; code?: string }
   | { type: 'sessions-list'; sessions: Array<Pick<Session, 'id' | 'title' | 'updatedAt' | 'createdAt'>> }
   | { type: 'session-data'; session: Session }
+  | { type: 'tts-download-result'; requestId: string; ok: boolean; error?: string; filename?: string; downloadId?: number }
   | { type: 'tts-state'; state: TtsPanelState };
 
 // ===== أدوات بنمط MCP =====

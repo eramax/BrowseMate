@@ -2,7 +2,7 @@
   // BrowseMate — App: يملك Port والأحداث والجلسات؛ العرض في مكوّنات
   import { openPanelPort, rpc } from './lib/port';
   import { setLang as setI18nLang, type Lang } from '../shared/i18n';
-  import type { ChatMessage, Session, ToolCallInfo, SkillFile, TtsPanelState } from '../shared/types';
+  import type { ChatMessage, Session, ToolCallInfo, SkillFile, TtsPanelState, VoiceMessage } from '../shared/types';
   import ChatView from './components/ChatView.svelte';
   import SkillList from './components/SkillList.svelte';
   import SettingsView from './components/SettingsView.svelte';
@@ -27,6 +27,7 @@
   let lastUserText = $state('');
   let lastSkill = $state<{ name: string; params: Record<string, string> } | undefined>();
   let ttsState = $state<TtsPanelState | null>(null);
+  const downloadWaiters = new Map<string, (r: any) => void>();
   let queuedSends = $state<Array<{ text: string; skill?: { name: string; params: Record<string, string> } }>>([]);
   let queuedText = $state('');
   let ackTimer: ReturnType<typeof setTimeout> | undefined;
@@ -58,6 +59,14 @@
     // حالة الصوت تُبث لكل البانلات؛ العرض نفسه يفلترها حسب جلسته
     if (e.type === 'tts-state') {
       if (e.state && (!ttsState || (e.state.updatedAt ?? 0) >= (ttsState.updatedAt ?? 0))) ttsState = e.state;
+      return;
+    }
+    if (e.type === 'tts-download-result') {
+      const done = downloadWaiters.get(e.requestId);
+      if (done) {
+        downloadWaiters.delete(e.requestId);
+        done(e);
+      }
       return;
     }
     // أحداث تشغيل جلسة أخرى لا تخصّ هذه الواجهة
@@ -121,9 +130,10 @@
     const res: any = await rpc('get-session', { id });
     if (res.ok && res.session) {
       // إخفاء مسودات فارغة قديمة (بقايا انقطاع) — لا فقاعات فارغة في الشات
-      messages = (res.session.messages as ChatMessage[]).filter(
-        (m) => m.role !== 'assistant' || m.content.trim() || m.toolCalls?.length || m.voices?.length,
-      );
+      messages = (res.session.messages as ChatMessage[])
+        .filter((m) => m.role !== 'assistant' || m.content.trim() || m.toolCalls?.length || m.voices?.length)
+        // رسالة صوتية واحدة لكل رد — نعرض آخر قراءة فقط (بيانات قديمة قد تحتوي أكثر)
+        .map((m) => (m.voices && m.voices.length > 1 ? { ...m, voices: [m.voices[m.voices.length - 1]] } : m));
     }
   }
   async function refreshSessions() {
@@ -170,6 +180,24 @@
   }
 
   function stop() { port.send({ type: 'stop', sessionId }); }
+
+  function ttsDownloadVoice(v: VoiceMessage): Promise<any> {
+    const requestId = crypto.randomUUID();
+    return new Promise((resolve) => {
+      downloadWaiters.set(requestId, resolve);
+      port.send({
+        type: 'tts-download',
+        requestId,
+        text: v.text,
+        voice: v.engine === 'edge' ? v.voice : '',
+        rate: v.rate,
+        sessionId,
+      });
+      setTimeout(() => {
+        if (downloadWaiters.delete(requestId)) resolve({ ok: false, error: 'انتهت مهلة تجهيز الملف' });
+      }, 300_000);
+    });
+  }
   function approve(id: string, ok: boolean) {
     approvals = approvals.filter((a) => a.id !== id);
     port.send({ type: 'approval-response', id, approved: ok });
@@ -272,7 +300,8 @@
         ttsReplay={() => rpc('tts-replay', { sessionId })}
         ttsPrev={() => rpc('tts-prev', { sessionId })}
         ttsNext={() => rpc('tts-next', { sessionId })}
-        ttsReplayVoice={(v) => rpc('tts-speak-text', { text: v.text, voice: v.voice, rate: v.rate, engine: v.engine, sessionId, voiceId: v.id, replay: true })}
+        ttsReplayVoice={(v) => rpc('tts-speak-text', { text: v.text, voice: v.engine === 'edge' ? v.voice : '', rate: v.rate, engine: 'edge', sessionId, voiceId: v.id, replay: true })}
+        ttsDownloadVoice={ttsDownloadVoice}
       />
     {:else if tab === 'skills'}
       <SkillList {skills} {lang} run={runSkill} remove={deleteSkill} refresh={refreshSkills} />

@@ -75,18 +75,15 @@ describe('TTS controller — single playback, explicit ownership', () => {
     expect(s.state.text).toBe('ثانياً');
   });
 
-  it('falls back to a language-appropriate browser voice and reports edgeError', async () => {
+  it('never falls back to browser voices when Edge fails', async () => {
     const s = setup();
     s.edge.result = { ok: false, error: 'EDGE_WS_ERROR' };
     s.browser.result = { ok: true, voice: 'ar-EG-BrowserVoice' };
     const res = await s.controller.start({ text: 'نص عربي', sessionId: 'a', tabId: null });
-    expect(res.ok).toBe(true);
-    expect(res.engine).toBe('browser');
-    expect(res.fallback).toBe(true);
+    expect(res.ok).toBe(false);
     expect(res.edgeError).toBe('EDGE_WS_ERROR');
-    expect(res.voice).toBe('ar-EG-BrowserVoice');
-    expect(s.state.engine).toBe('browser');
-    expect(s.state.voice).toBe('ar-EG-BrowserVoice');
+    expect(s.browser.calls).toHaveLength(0);
+    expect(s.state.active).toBe(false);
   });
 
   it('does not fall back when the user stopped Edge mid-start', async () => {
@@ -205,6 +202,35 @@ describe('TTS controller — single playback, explicit ownership', () => {
     const late = await s.controller.start({ text: 'نص', sessionId: 'a', tabId: null, voiceId: 'early-voice' });
     expect(late.ok).toBe(false);
     expect(late.error).toBe('TTS_STOPPED');
+  });
+
+
+  it('advances through a text playlist with the same voiceId', async () => {
+    const s = setup();
+    const res = await s.controller.start({
+      text: 'الفقرة الأولى. الفقرة الثانية.',
+      sessionId: 'a',
+      tabId: null,
+      voiceId: 'voice-seq',
+      playlist: [
+        { text: 'الفقرة الأولى.', key: 'k1' },
+        { text: 'الفقرة الثانية.', key: 'k2' },
+      ],
+    });
+    expect(res.ok).toBe(true);
+    expect(s.edge.calls).toHaveLength(1);
+    expect(s.edge.calls[0].text).toBe('الفقرة الأولى.');
+    expect(s.state.voiceId).toBe('voice-seq');
+
+    s.controller.handleEvent({ playbackId: 'p1', event: { type: 'end' } });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(s.edge.calls).toHaveLength(2);
+    expect(s.edge.calls[1].text).toBe('الفقرة الثانية.');
+    expect(s.state.voiceId).toBe('voice-seq');
+    expect(s.state.status).toBe('playing');
+
+    s.controller.handleEvent({ playbackId: 'p2', event: { type: 'end' } });
+    expect(s.state.status).toBe('ended');
   });
 
   it('rejects an in-flight page paragraph after its voiceId was stopped, but allows replay', async () => {

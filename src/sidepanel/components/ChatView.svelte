@@ -10,7 +10,7 @@
     sessions, currentId, settingsError, stalled,
     send, stop, approve, retry, openSettings,
     openSession, createSession, removeSession, queuedText,
-    ttsState, ttsPlay, ttsPause, ttsStop, ttsSeek, ttsReplay, ttsPrev, ttsNext, ttsReplayVoice,
+    ttsState, ttsPlay, ttsPause, ttsStop, ttsSeek, ttsReplay, ttsPrev, ttsNext, ttsReplayVoice, ttsDownloadVoice,
   }: {
     messages: ChatMessage[];
     liveText: string;
@@ -42,6 +42,7 @@
     ttsPrev: () => void;
     ttsNext: () => void;
     ttsReplayVoice: (v: VoiceData) => void;
+    ttsDownloadVoice: (v: VoiceData) => Promise<any> | void;
   } = $props();
 
   let text = $state('');
@@ -220,6 +221,14 @@
                   onSeek={ttsSeek}
                   onPrev={ttsPrev}
                   onNext={ttsNext}
+                  onDownload={() => ttsDownloadVoice({
+                    id: sessionTts?.voiceId || '',
+                    text: sessionTts?.text || '',
+                    voice: sessionTts?.voice || '',
+                    rate: sessionTts?.rate || 1,
+                    engine: sessionTts?.engine || 'edge',
+                    createdAt: Date.now(),
+                  })}
                 />
               {:else}
                 <VoiceMessage
@@ -227,6 +236,7 @@
                   {lang}
                   live={false}
                   onReplay={() => ttsReplayVoice(v)}
+                  onDownload={() => ttsDownloadVoice(v)}
                 />
               {/if}
             {/each}

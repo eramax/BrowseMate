@@ -411,3 +411,23 @@ export async function edgeState(): Promise<{
     duration: Number(res.duration) || 0,
   };
 }
+
+/** تسخين اتصال Edge وإبقاء مستند offscreen حياً أثناء فتح البانل. */
+export async function edgeWarm(): Promise<void> {
+  await sendOffscreen({ type: 'edge-warm' }, 3000);
+}
+
+export async function edgeCold(): Promise<void> {
+  await sendOffscreen({ type: 'edge-cold' }, 3000);
+}
+
+/** توليد/جمع MP3 كامل لرسالة صوتية (للتحميل) دون تشغيله. */
+export async function edgeExport(
+  items: Array<{ key: string; text: string }>,
+  voice: string,
+  rate: number,
+): Promise<{ ok: boolean; base64?: string; error?: string; bytes?: number }> {
+  const connect = await ensureEdgeConnected();
+  if (!connect.ok) return { ok: false, error: connect.error };
+  return sendOffscreen({ type: 'edge-export', items, voice, rate }, 180_000);
+}

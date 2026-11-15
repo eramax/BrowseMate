@@ -137,13 +137,14 @@ async function startReading(
   }
   const sample = usable.slice(0, 4).map((b) => b.text).join(' ').slice(0, 6000);
   const textLang = detectTextLang(sample);
-  const engine: 'edge' | 'browser' = options.engine ?? player.getSettings().engine;
+  // Edge فقط — إعدادات قديمة قد تحتوي browser، نتجاهلها
+  const engine: 'edge' = 'edge';
   if (options.engine) {
     player.setSettings({ engine: options.engine });
     try { chrome.storage.local.set({ engine: options.engine }); } catch { /* ignore */ }
   }
 
-  if (options.voice) {
+  if (options.voice && /Neural$/i.test(options.voice)) {
     player.setSettings({ voice: options.voice });
     if (engine === 'edge') {
       if (textLang === 'ar') {
@@ -207,7 +208,7 @@ async function startReading(
     voice: first.voice ?? player.getSettings().voice,
     rate: player.getSettings().rate,
     engine: first.engine ?? player.getSettings().engine,
-    text: usable.map((b) => b.text).join('\n\n').slice(0, 12000),
+    text: usable.map((b) => b.text).join('\n\n'),
     voiceId: first.voiceId || readerVoiceId,
     ...(first.fallback ? { fallback: true, edgeError: first.edgeError } : {}),
   };
@@ -262,7 +263,8 @@ function loadSettings(): void {
         browserVoice = typeof data?.browserVoice === 'string' && data.browserVoice
           ? data.browserVoice
           : legacy && !/Neural$/i.test(legacy) ? legacy : '';
-        const engine = data?.engine === 'browser' ? 'browser' : 'edge';
+        // Edge فقط — نتجاهل أي إعداد browser قديم
+        const engine: 'edge' = 'edge';
         player.setSettings({ engine });
 
         // الصوت يتبع لغة النص الحالي (فقرات القراءة إن كانت نشطة، وإلا الصفحة)
@@ -475,7 +477,7 @@ chrome.runtime.onMessage.addListener((msg: any, _sender, send) => {
       }
 
       case 'set-voice':
-        if (typeof msg.voice === 'string' && msg.voice) {
+        if (typeof msg.voice === 'string' && /Neural$/i.test(msg.voice)) {
           player.setSettings({ voice: msg.voice });
           const sample = (blocks.length ? blocks.map((b) => b.text).join(' ') : document.body?.innerText || '').slice(0, 6000);
           const textLang = detectTextLang(sample);

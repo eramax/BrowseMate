@@ -5,6 +5,7 @@ import type { TtsStartRequest, TtsStartResult, StopScope } from './tts-controlle
 import { createTtsController } from './tts-controller';
 import {
   edgeHalt,
+  edgeExport,
   edgePause,
   edgeResume,
   edgeSeek,
@@ -13,7 +14,8 @@ import {
   edgeStop,
 } from './edge';
 import { getTtsVoices, ttsPause, ttsResume, ttsSpeak, ttsStop } from './tts';
-import { pickBrowserVoice } from './tts-voice';
+import { pickBrowserVoice, edgeVoiceFor } from './tts-voice';
+import { buildSpeechSegments } from './tts-split';
 import { logSystemDebug } from './debug';
 
 let emit: ((s: TtsPanelState) => void) | null = null;
@@ -132,14 +134,20 @@ export async function speakTextDirect(
   voiceId?: string,
   replay = false,
 ): Promise<TtsStartResult> {
+  const engineName: 'edge' | 'browser' = engine === 'browser' ? 'browser' : 'edge';
+  const rateValue = Number(rate) || 1;
+  const edgeVoice = edgeVoiceFor(text, voice);
+  // Edge فقط يُقسّم النص؛ الأصوات الأخرى لا تمر بهذا المسار في الإنتاج
+  const playlist = engineName === 'edge' ? buildSpeechSegments(text, edgeVoice, rateValue) : undefined;
   return controller.start({
     text,
-    voice,
-    rate,
-    engine: engine === 'browser' ? 'browser' : 'edge',
+    voice: engineName === 'edge' ? edgeVoice : voice,
+    rate: rateValue,
+    engine: engineName,
     sessionId: sessionId || chatSessionId,
     voiceId,
     replay,
+    playlist,
     tabId: null,
     title: '',
     index: 0,
@@ -154,7 +162,7 @@ export async function startPagePlayback(msg: any, tabId: number | null): Promise
     text: String(msg?.text || ''),
     voice: msg?.voice,
     rate: msg?.rate,
-    engine: msg?.engine === 'browser' ? 'browser' : 'edge',
+    engine: 'edge',
     sessionId: String(msg?.sessionId || chatSessionId || ''),
     voiceId: voiceId || undefined,
     replay: Boolean(msg?.replay),
@@ -211,7 +219,15 @@ export async function replayTts(sessionId = ''): Promise<any> {
       /* التبويب أُغلق أو القارئ غير موجود — نعود إلى النص */
     }
   }
-  return speakTextDirect(st.text, st.voice, st.rate, st.engine, st.sessionId, st.voiceId, true);
+  return speakTextDirect(
+    st.text,
+    st.engine === 'edge' ? st.voice : '',
+    st.rate,
+    'edge',
+    st.sessionId,
+    st.voiceId,
+    true,
+  );
 }
 
 export async function nextTts(sessionId = ''): Promise<any> {
@@ -235,6 +251,36 @@ export async function prevTts(sessionId = ''): Promise<any> {
     return { ok: true };
   } catch {
     return { ok: false, error: 'TAB_GONE' };
+  }
+}
+
+
+/** تحميل الرسالة الصوتية كملف MP3 كامل — يوقف التشغيل أولاً لتفادي تعارض WS. */
+export async function downloadTts(
+  text: string,
+  voice: string | undefined,
+  rate: number | undefined,
+  sessionId?: string,
+): Promise<{ ok: boolean; downloadId?: number; filename?: string; error?: string; bytes?: number }> {
+  const clean = String(text || '').trim();
+  if (!clean) return { ok: false, error: 'EMPTY_TEXT' };
+  await stopTts({ kind: 'all' });
+  const rateValue = Number(rate) || 1;
+  const edgeVoice = edgeVoiceFor(clean, voice);
+  const segments = buildSpeechSegments(clean, edgeVoice, rateValue);
+  if (!segments.length) return { ok: false, error: 'NO_SEGMENTS' };
+  const res = await edgeExport(segments.map(({ key, text: part }) => ({ key, text: part })), edgeVoice, rateValue);
+  if (!res.ok || !res.base64) return { ok: false, error: res.error || 'EXPORT_FAILED' };
+  const filename = `browsemate-voice-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}.mp3`;
+  try {
+    const downloadId = await chrome.downloads.download({
+      url: `data:audio/mpeg;base64,${res.base64}`,
+      filename,
+      saveAs: false,
+    });
+    return { ok: true, downloadId, filename, bytes: res.bytes };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : String(e), bytes: res.bytes };
   }
 }
 

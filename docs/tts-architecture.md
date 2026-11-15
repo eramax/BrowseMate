@@ -33,8 +33,13 @@ transport for the Edge handshake.
    `VoiceMessage.id`.
 5. **Stale events are ignored.** Every engine event carries `playbackId`; the controller
    drops events that do not belong to the active playback.
-6. **A failed start is not a successful voice message.** Browser TTS is awaited until
-   `start` or `error`; a silent failure never produces a card claiming success.
+6. **A failed start is not a successful voice message.** A silent failure never produces a
+   card claiming success.
+7. **Edge only.** Production read-aloud never falls back to `chrome.tts`; a browser voice
+   may not support Arabic and can read only digits. If Edge fails, the tool reports the
+   error and the model must not retry with a browser voice.
+8. **One voice message per assistant reply.** The last successful read-aloud in a run wins;
+   old messages with several voices are displayed as their last (Edge) voice only.
 
 ## Layers
 
@@ -98,21 +103,40 @@ same cancellation path.
 for old messages. The “last voice message in the tab” fallback is kept only for legacy
 messages without `voiceId`.
 
-## Engine contract
+## Edge only + long-text playlist
 
-```ts
-interface TtsEngine {
-  speak(req): Promise<{ ok; error?; voice? }>;
-  halt(): void | Promise<void>;   // silence now, keep connection/cache
-  stop(): void | Promise<void>;   // full reset
-  pause(): void;
-  resume(): void;
-  seek?(time: number): void;
-}
-```
+`chrome.tts` remains as an internal/test adapter, but production tools, settings and the
+panel force `edge` and normalize legacy browser voice names away. A browser voice name can
+never reach the Edge WebSocket.
 
-`Edge` and `browser` implement the same contract. The controller always calls `halt` on
-both before starting, so a native `chrome.tts` utterance can never overlap Edge audio.
+A single Edge request stops responding for long text (~1000+ chars). `tts-split.ts` splits
+free text into segments of at most 280 characters at sentence/word boundaries. The
+controller plays them as a **playlist**: the first segment starts immediately, the next two
+are prefetched, and `end` advances to the next segment with the same `voiceId`. The card
+stays one message; its text is the full original text.
+
+## Warm engine and caching
+
+While the side panel is open, the SW keeps the offscreen document and Edge WebSocket warm
+and runs a silent looping WAV in the offscreen document. Chrome closes an `AUDIO_PLAYBACK`
+offscreen document after 30 seconds without audio; the silent loop prevents that. First
+playback after a long idle is then just the first segment synthesis (~1s in testing).
+`edge-cold` is sent when the last panel closes.
+
+Synthesized audio is cached in the offscreen document by
+`text|voice|rate` (LRU 48). Replays and downloads reuse cached segments. The cache is
+in-memory and survives normal stop/play, but not a browser/extension restart; a new unique
+text is always synthesized once.
+
+## Download and transcript
+
+Each voice card has:
+- **Show text** (📄): expands the full text, scrollable and selectable, with a text download.
+- **Download audio** (⬇): the SW splits the saved text again, reuses cached segments or
+  synthesizes missing ones in the offscreen document, merges all MP3 segments, and downloads
+  one complete MP3 via `chrome.downloads`. Long exports run over the panel Port (not a
+  one-shot RPC) so they are not cut by message timeouts. The silent keepalive covers exports
+  longer than 30 seconds.
 
 ## Edge transport
 
@@ -171,12 +195,11 @@ For Edge playback:
 1. Reuse an open WS, otherwise `edge-connect`.
 2. On channel/WS errors, `edge-reset` (reconnect, keep the document) and retry once.
 3. On another connection error, recreate the offscreen document and retry once.
-4. If Edge still fails, pick a browser voice matching the text language
-   (`ar-EG`/`ar-SA`/`ar-*`, else `en-*`, else any installed voice).
-5. If browser TTS fails, return an error; do **not** save a voice message.
+4. If Edge still fails, return a clear error (`EDGE_*` / `edgeError`). Do **not** use a
+   browser voice and do **not** save a voice message.
 
 `speakTextDirect` and the page reader both return the actual `engine`/`voice`, and the tool
-result stores those values. Fallback results include `fallback` and `edgeError`.
+result stores those values.
 
 ## Panel state
 

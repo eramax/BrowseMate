@@ -3,6 +3,7 @@
 // الربط بالجلسة والتبويب صريح، لذا لا تنتقل البطاقة بين الجلسات.
 import type { TtsPanelState } from '../shared/types';
 import { edgeVoiceFor } from './tts-voice';
+import type { SpeechSegment } from './tts-split';
 
 export type TtsEngineName = 'edge' | 'browser';
 export type TtsStatus = 'idle' | 'starting' | 'playing' | 'paused' | 'ended' | 'error';
@@ -28,6 +29,8 @@ export interface TtsStartRequest {
   voiceId?: string;
   /** إعادة تشغيل مقصودة من المستخدم — تتجاوز إلغاء voiceId السابق */
   replay?: boolean;
+  /** نص حر مقسّم إلى مقاطع؛ يبدأ التالي تلقائياً عند انتهاء الحالي */
+  playlist?: SpeechSegment[];
   /** null = نص حر داخل البانل بدون صفحة */
   tabId: number | null;
   title?: string;
@@ -112,6 +115,8 @@ interface ActivePlayback {
   title: string;
   index: number;
   total: number;
+  playlist?: SpeechSegment[];
+  playlistIndex: number;
 }
 
 const EMPTY_STATE: TtsPanelState = {
@@ -256,6 +261,14 @@ export function createTtsController(deps: TtsControllerDeps) {
       : await deps.pickBrowserVoice(text, req.voice);
     if (my !== seq) return { ok: false, error: 'TTS_SUPERSEDED' };
 
+    const playlist = Array.isArray(req.playlist) && req.playlist.length ? req.playlist : undefined;
+    const firstSegment = playlist?.[0];
+    const runText = firstSegment?.text || text;
+    const runKey = firstSegment?.key || req.key || '';
+    const runPrefetch = playlist
+      ? playlist.slice(1, 3).map((s) => ({ key: s.key, text: s.text }))
+      : (req.prefetch ?? []);
+
     active = {
       playbackId,
       voiceId,
@@ -268,6 +281,8 @@ export function createTtsController(deps: TtsControllerDeps) {
       title,
       index: Number.isFinite(Number(req.index)) ? Number(req.index) : 0,
       total: Number.isFinite(Number(req.total)) ? Number(req.total) : 1,
+      playlist,
+      playlistIndex: 0,
     };
 
     publish({
@@ -290,7 +305,7 @@ export function createTtsController(deps: TtsControllerDeps) {
     });
     if (starting?.token === my) starting = null;
 
-    const started = await runEngine(engine, { text, voice, rate, tabId: targetTab, playbackId, key: req.key || '', prefetch: req.prefetch ?? [] });
+    const started = await runEngine(engine, { text: runText, voice, rate, tabId: targetTab, playbackId, key: runKey, prefetch: runPrefetch });
     if (my !== seq) return { ok: false, error: 'TTS_SUPERSEDED', playbackId, voiceId };
 
     if (started.ok) {
@@ -307,44 +322,14 @@ export function createTtsController(deps: TtsControllerDeps) {
       return { ok: false, error: 'TTS_STOPPED', playbackId, voiceId };
     }
 
-    // 3) السقوط من Edge: صوت متصفح مناسب للغة النص — وليس الصوت الافتراضي الفارغ
+    // Edge فقط: لا سقوط تلقائي إلى صوت متصفح (قد لا يدعم العربية ويقرأ أرقاماً فقط)
     if (engine === 'edge') {
-      deps.log?.('tts:edge-fallback', { error: started.error, voice }, 'warn');
-      const fallbackVoice = await deps.pickBrowserVoice(text);
-      if (my !== seq) return { ok: false, error: 'TTS_SUPERSEDED', playbackId, voiceId };
-      const fallback = await runEngine('browser', {
-        text,
-        voice: fallbackVoice,
-        rate,
-        tabId: targetTab,
-        playbackId,
-        key: '',
-        prefetch: [],
-      });
-      if (my !== seq) return { ok: false, error: 'TTS_SUPERSEDED', playbackId, voiceId };
-
-      if (fallback.ok) {
-        if (active) {
-          active.engine = 'browser';
-          active.voice = fallback.voice || fallbackVoice;
-          publish({ engine: 'browser', voice: active.voice, playing: true, status: 'playing' });
-        }
-        return {
-          ok: true,
-          engine: 'browser',
-          voice: active?.voice || fallbackVoice,
-          fallback: true,
-          edgeError: started.error,
-          playbackId,
-          voiceId,
-        };
-      }
-
+      deps.log?.('tts:edge-failed', { error: started.error, voice }, 'warn');
       active = null;
       publish({ active: false, playing: false, status: 'error' });
       return {
         ok: false,
-        error: fallback.error || 'TTS_FAILED',
+        error: started.error || 'EDGE_FAILED',
         edgeError: started.error,
         playbackId,
         voiceId,
@@ -449,6 +434,47 @@ export function createTtsController(deps: TtsControllerDeps) {
     return true;
   }
 
+  async function advancePlaylist(a: ActivePlayback): Promise<void> {
+    if (!a.playlist) return;
+    const next = a.playlistIndex + 1;
+    if (next >= a.playlist.length) {
+      publish({ playing: false, status: 'ended' });
+      return;
+    }
+    a.playlistIndex = next;
+    a.playbackId = uuid();
+    const segment = a.playlist[next];
+    publish({
+      status: 'starting',
+      playing: true,
+      currentTime: 0,
+      duration: 0,
+      playbackId: a.playbackId,
+      text: a.text,
+      index: a.index,
+      total: a.total,
+    });
+    const prefetch = a.playlist.slice(next + 1, next + 3).map((s) => ({ key: s.key, text: s.text }));
+    const res = await runEngine('edge', {
+      text: segment.text,
+      voice: a.voice,
+      rate: a.rate,
+      tabId: a.tabId,
+      playbackId: a.playbackId,
+      key: segment.key,
+      prefetch,
+    });
+    if (active !== a) return;
+    if (res.ok) {
+      a.voice = res.voice || a.voice;
+      publish({ status: 'playing', playing: true, voice: a.voice });
+    } else {
+      deps.log?.('tts:playlist-segment-failed', { error: res.error, index: next }, 'warn');
+      active = null;
+      publish({ active: false, playing: false, status: 'error' });
+    }
+  }
+
   /** أحداث المحرك — تُتجاهل إن كانت تخص تشغيلاً سابقاً. */
   function handleEvent(evt: EngineEvent): void {
     if (!active) return;
@@ -469,6 +495,10 @@ export function createTtsController(deps: TtsControllerDeps) {
         });
         break;
       case 'end':
+        if (active?.playlist && active.playlistIndex + 1 < active.playlist.length) {
+          void advancePlaylist(active);
+          return;
+        }
         publish({
           playing: false,
           status: 'ended',

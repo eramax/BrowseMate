@@ -19,6 +19,7 @@ describe('voice selection', () => {
     expect(edgeVoiceFor('English text')).toBe('en-US-EmmaMultilingualNeural');
     expect(edgeVoiceFor('12345')).toBe('en-US-EmmaMultilingualNeural');
     expect(edgeVoiceFor('نص', 'ar-SA-HamedNeural')).toBe('ar-SA-HamedNeural');
+    expect(edgeVoiceFor('نص', 'Google UK English Female')).toBe('ar-EG-ShakirNeural');
   });
 
   it('never keeps an Edge voice when falling back to browser voices', () => {

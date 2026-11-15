@@ -29,7 +29,7 @@ register({
 register({
   name: 'read_aloud',
   description:
-    'يقرأ بصوت عالٍ الأجزاء التي يختارها الوكيل. text يُقرأ مباشرة في مشغل البانل بدون فتح صفحة (لا تظليل)؛ أما blockIds/from-to/selector/selection فتعمل داخل الصفحة مع أزرار عائمة وتظليل الفقرة والكلمة. اختر هدفاً واحداً فقط. لا تقرأ الصفحة كلها افتراضياً؛ اختر المحتوى الرئيسي. يستخدم أصوات Microsoft Edge العصبية افتراضياً، مع أصوات المتصفح كاحتياط.',
+    'يقرأ بصوت عالٍ الأجزاء التي يختارها الوكيل. text يُقرأ مباشرة في مشغل البانل بدون فتح صفحة (لا تظليل)؛ أما blockIds/from-to/selector/selection فتعمل داخل الصفحة مع أزرار عائمة وتظليل الفقرة والكلمة. اختر هدفاً واحداً فقط. لا تقرأ الصفحة كلها افتراضياً؛ اختر المحتوى الرئيسي. يستخدم أصوات Microsoft Edge العصبية فقط. إذا فشل Edge تُعاد رسالة خطأ واضحة ولا يُستخدم صوت المتصفح.',
   sensitive: false,
   idempotent: true,
   schema: z.object({
@@ -39,9 +39,9 @@ register({
     toBlockId: z.string().optional().describe('انتهِ عند هذه الفقرة (شاملة)'),
     selector: z.string().max(300).optional().describe('محدد CSS لعناصر تُقرأ، مثل article p'),
     selection: z.boolean().optional().describe('اقرأ الفقرات المتقاطعة مع التحديد الحالي'),
-    text: z.string().min(1).max(20000).optional().describe('نص حر يُقرأ مباشرة كرسالة صوتية في المحادثة بدون فتح صفحة وبدون تظليل'),
+    text: z.string().min(1).max(12000).optional().describe('نص حر يُقرأ مباشرة كرسالة صوتية في المحادثة بدون فتح صفحة وبدون تظليل (حتى 12000 حرف)'),
     rate: z.number().min(0.5).max(2).optional().describe('سرعة القراءة (0.5–2، افتراضي 1)'),
-    engine: z.enum(['edge', 'browser']).optional().describe('edge = أصوات Microsoft Edge العصبية (افتراضي)، browser = أصوات chrome.tts'),
+    engine: z.enum(['edge']).optional().describe('Edge فقط (أصوات Microsoft Edge العصبية)'),
     voice: z.string().max(200).optional().describe('اسم صوت من list_tts_voices (مثل ar-EG-ShakirNeural)'),
   }),
   execute: async (a, ctx) => {
@@ -67,46 +67,28 @@ register({
         message: 'اختر هدفاً واحداً فقط: blockIds أو نطاق أو selector أو selection أو text.',
       };
     }
-    const engine: 'edge' | 'browser' = a.engine === 'browser' ? 'browser' : 'edge';
-
-    if (engine === 'edge') {
-      // نتحقق من الصوت إن أمكن، لكن لا نمنع المحاولة إذا فشل جلب القائمة
-      try {
-        const edgeVoices = await fetchEdgeVoices();
-        if (edgeVoices.length && a.voice && !edgeVoices.some((v) => v.name === a.voice)) {
-          const arabic = edgeVoices
-            .filter((v) => v.lang.toLowerCase().startsWith('ar'))
-            .sort((a, b) => (a.lang === 'ar-EG' ? 0 : 1) - (b.lang === 'ar-EG' ? 0 : 1) || a.name.localeCompare(b.name))
-            .slice(0, 8);
-          return {
-            error: 'EDGE_VOICE_NOT_FOUND',
-            message: `صوت Edge «${a.voice}» غير موجود. استخدم list_tts_voices({engine:'edge'}) لاختيار صوت.`,
-            voices: (arabic.length ? arabic : edgeVoices.slice(0, 8)).map((v) => ({
-              name: v.name,
-              lang: v.lang,
-              gender: v.gender,
-            })),
-          };
-        }
-      } catch {
-        /* دع محرك Edge يحاول؛ SW سيسقط إلى صوت المتصفح عند الفشل */
-      }
-    } else {
-      const voices = await getTtsVoices();
-      if (!voices.length) {
+    // Edge فقط في الإنتاج — لا نستخدم أصوات المتصفح لأنها قد لا تدعم العربية
+    const engine: 'edge' = 'edge';
+    // نتحقق من الصوت إن أمكن، لكن لا نمنع المحاولة إذا فشل جلب القائمة
+    try {
+      const edgeVoices = await fetchEdgeVoices();
+      if (edgeVoices.length && a.voice && !edgeVoices.some((v) => v.name === a.voice)) {
+        const arabic = edgeVoices
+          .filter((v) => v.lang.toLowerCase().startsWith('ar'))
+          .sort((a, b) => (a.lang === 'ar-EG' ? 0 : 1) - (b.lang === 'ar-EG' ? 0 : 1) || a.name.localeCompare(b.name))
+          .slice(0, 8);
         return {
-          error: 'TTS_NO_VOICES',
-          message:
-            'لا توجد أصوات TTS متاحة في المتصفح. ثبّت صوتاً في النظام (مثلاً صوت عربي) أو فعّل إضافة Google Network Speech، أو استخدم engine:edge.',
+          error: 'EDGE_VOICE_NOT_FOUND',
+          message: `صوت Edge «${a.voice}» غير موجود. استخدم list_tts_voices({engine:'edge'}) لاختيار صوت.`,
+          voices: (arabic.length ? arabic : edgeVoices.slice(0, 8)).map((v) => ({
+            name: v.name,
+            lang: v.lang,
+            gender: v.gender,
+          })),
         };
       }
-      if (a.voice && !voices.some((v) => v.name === a.voice)) {
-        return {
-          error: 'VOICE_NOT_FOUND',
-          message: `الصوت «${a.voice}» غير متاح. استخدم list_tts_voices({engine:'browser'}) لاختيار صوت موجود.`,
-          voices: voices.slice(0, 10).map((v) => ({ name: v.name, lang: v.lang, supportsWord: v.supportsWord })),
-        };
-      }
+    } catch {
+      /* دع محرك Edge يحاول؛ سيُبلّغ عن الخطأ بدل السقوط إلى صوت متصفح */
     }
 
     // نص حر: يُقرأ مباشرة في مشغل البانل بدون فتح صفحة
@@ -118,7 +100,8 @@ register({
       !a.selector?.trim() &&
       a.selection !== true;
     if (isTextOnly) {
-      const text = String(a.text || '');
+      // نفس النص يُقرأ ويُحفظ ويُحمّل — لا صوت أطول من النص المحفوظ
+      const text = String(a.text || '').slice(0, 12000);
       const res: any = await speakTextDirect(text, a.voice, a.rate, engine, ctx.sessionId);
       if (res?.ok) {
         return {
@@ -139,7 +122,10 @@ register({
             : {}),
         };
       }
-      return res;
+      return {
+        ...res,
+        message: res?.message || `تعذر تشغيل صوت Edge (${res?.error || 'خطأ'}). لم يتم استخدام صوت المتصفح — أبلغ المستخدم بالخطأ.`,
+      };
     }
 
     const tabId = await resolveTabId(a.tabId, ctx);

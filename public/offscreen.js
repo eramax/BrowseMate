@@ -12,7 +12,7 @@
   const AUDIO_DELIM = new TextEncoder().encode('Path:audio\r\n');
   const DEFAULT_AR = 'ar-EG-ShakirNeural';
   const DEFAULT_EN = 'en-US-EmmaMultilingualNeural';
-  const CACHE_MAX = 8;
+  const CACHE_MAX = 48;
   const SYNTH_TIMEOUT = 20_000;
 
   /** @type {WebSocket|null} */
@@ -38,6 +38,8 @@
    * }}
    */
   let pending = null;
+  /** تصدير صوت (تحميل) — لا يشغّل الصوت */
+  let exporting = false;
   /** @type {{key:string,text:string,voice:string,rate:number,tabId:number|null}[]} */
   let prefetchQueue = [];
   /** @type {Map<string,{url:string,boundaries:any[],text:string,voice:string,rate:number}>} */
@@ -357,7 +359,7 @@
         try {
           req.resolve({
             ok: true,
-            bytes: entry.bytes || 0,
+            bytes: entry.bytes ? entry.bytes.length : 0,
             words: boundaries.length,
             voice: req.voice || '',
             cached: !owned,
@@ -392,6 +394,7 @@
       resolve: job.resolve,
       timeout: null,
       prefetch: Boolean(job.prefetch),
+      export: Boolean(job.export),
       key: job.key || '',
       playbackId: job.playbackId || '',
     };
@@ -456,13 +459,148 @@
     const bounds = buildBoundaries(req.text, req.metadata);
 
     if (req.prefetch) {
-      cacheSet(req.key, { url, boundaries: bounds, text: req.text, voice: req.voice, rate: req.rate });
+      cacheSet(req.key, { url, boundaries: bounds, text: req.text, voice: req.voice, rate: req.rate, bytes: merged });
       log('prefetched', req.key.slice(0, 40), 'words', bounds.length);
       runPrefetch();
       return;
     }
 
-    playEntry(req, { url, boundaries: bounds, text: req.text, bytes: blob.size }, true);
+    // تصدير للتحميل: خزّن الصوت ولا تشغّله
+    if (req.export) {
+      cacheSet(req.key, { url, boundaries: bounds, text: req.text, voice: req.voice, rate: req.rate, bytes: merged });
+      try { req.resolve({ ok: true, bytes: merged.length }); } catch {}
+      return;
+    }
+
+    // خزّن الصوت الرئيسي أيضاً إن كان له مفتاح، ليصبح التحميل/الإعادة فورياً
+    const cacheEntry = { url, boundaries: bounds, text: req.text, voice: req.voice, rate: req.rate, bytes: merged };
+    if (req.key) {
+      cacheSet(req.key, cacheEntry);
+      playEntry(req, cacheEntry, false);
+    } else {
+      playEntry(req, cacheEntry, true);
+    }
+  }
+
+
+
+  // ===== keepalive for export =====
+  // Chrome يغلق offscreen بسبب AUDIO_PLAYBACK بعد 30 ثانية بلا صوت.
+  // التصدير يركّب الصوت دون تشغيله، لذا نشغّل WAV صامتاً أثناءه.
+  let keepAliveAudio = null;
+  let keepAliveUrl = '';
+  function silentWavUrl() {
+    if (keepAliveUrl) return keepAliveUrl;
+    const sampleRate = 8000;
+    const dataSize = sampleRate;
+    const buf = new ArrayBuffer(44 + dataSize);
+    const dv = new DataView(buf);
+    const str = (off, s) => { for (let i = 0; i < s.length; i++) dv.setUint8(off + i, s.charCodeAt(i)); };
+    str(0, 'RIFF'); dv.setUint32(4, 36 + dataSize, true); str(8, 'WAVE'); str(12, 'fmt ');
+    dv.setUint32(16, 16, true); dv.setUint16(20, 1, true); dv.setUint16(22, 1, true);
+    dv.setUint32(24, sampleRate, true); dv.setUint32(28, sampleRate, true);
+    dv.setUint16(32, 1, true); dv.setUint16(34, 8, true); str(36, 'data'); dv.setUint32(40, dataSize, true);
+    new Uint8Array(buf, 44).fill(0x80);
+    keepAliveUrl = URL.createObjectURL(new Blob([buf], { type: 'audio/wav' }));
+    return keepAliveUrl;
+  }
+  const keepAliveReasons = new Set();
+  function startKeepAlive() {
+    try {
+      if (!keepAliveAudio) {
+        keepAliveAudio = new Audio();
+        keepAliveAudio.loop = true;
+        keepAliveAudio.volume = 0;
+        keepAliveAudio.style.display = 'none';
+        document.body.appendChild(keepAliveAudio);
+      }
+      keepAliveAudio.src = silentWavUrl();
+      void keepAliveAudio.play().catch(() => {});
+    } catch {}
+  }
+  function stopKeepAlive() {
+    try {
+      if (keepAliveAudio) {
+        keepAliveAudio.pause();
+        keepAliveAudio.removeAttribute('src');
+        keepAliveAudio.load();
+      }
+    } catch {}
+  }
+  function acquireKeepAlive(reason) {
+    keepAliveReasons.add(reason);
+    startKeepAlive();
+  }
+  function releaseKeepAlive(reason) {
+    keepAliveReasons.delete(reason);
+    if (!keepAliveReasons.size) stopKeepAlive();
+  }
+
+  // ===== export (download) =====
+  function bytesToBase64(bytes) {
+    let binary = '';
+    const chunk = 0x8000;
+    for (let i = 0; i < bytes.length; i += chunk) {
+      binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
+    }
+    return btoa(binary);
+  }
+
+  function synthChunk(item, voice, rate) {
+    return new Promise((resolve) => {
+      sendSynthesis({
+        text: item.text,
+        voice,
+        rate,
+        tabId: null,
+        key: item.key,
+        playbackId: 'export',
+        prefetch: false,
+        export: true,
+        resolve,
+      });
+    });
+  }
+
+  async function exportAudio(items, voice, rate, sendResponse) {
+    if (exporting) {
+      sendResponse({ ok: false, error: 'EXPORT_BUSY' });
+      return;
+    }
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
+      sendResponse({ ok: false, error: 'EDGE_NO_WS' });
+      return;
+    }
+    exporting = true;
+    acquireKeepAlive('export');
+    log('export start', items.length);
+    try {
+      const parts = [];
+      for (let i = 0; i < items.length; i++) {
+        const item = items[i];
+        let entry = cacheGet(item.key);
+        if (!entry || !entry.bytes) {
+          log('export synth', i, item.text.slice(0, 30));
+          const r = await synthChunk(item, voice, rate);
+          if (!r || !r.ok) throw new Error(r?.error || 'EDGE_EXPORT_CHUNK_FAILED');
+          entry = cacheGet(item.key);
+        }
+        if (!entry || !entry.bytes) throw new Error('EDGE_EXPORT_CACHE_MISS');
+        parts.push(entry.bytes);
+        log('export part', i, entry.bytes.length);
+      }
+      const merged = mergedAudio(parts);
+      if (!merged.length) throw new Error('EDGE_EXPORT_EMPTY');
+      const base64 = bytesToBase64(merged);
+      log('export done', merged.length, base64.length);
+      sendResponse({ ok: true, base64, mime: 'audio/mpeg', bytes: merged.length });
+    } catch (e) {
+      log('export failed', e && e.message ? e.message : String(e));
+      sendResponse({ ok: false, error: e && e.message ? e.message : String(e) });
+    } finally {
+      releaseKeepAlive('export');
+      exporting = false;
+    }
   }
 
   // ===== public ops =====
@@ -697,6 +835,17 @@
           sendEvent('progress', { currentTime: audio.currentTime || t, duration: max });
           if (!audio.paused) startTimer();
         }
+        sendResponse({ ok: true });
+        return true;
+      case 'edge-export':
+        void exportAudio(Array.isArray(msg.items) ? msg.items : [], String(msg.voice || ''), Number(msg.rate) || 1, sendResponse);
+        return true;
+      case 'edge-warm':
+        acquireKeepAlive('panel');
+        sendResponse({ ok: true });
+        return true;
+      case 'edge-cold':
+        releaseKeepAlive('panel');
         sendResponse({ ok: true });
         return true;
       case 'edge-ping':

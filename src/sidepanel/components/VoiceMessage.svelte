@@ -14,6 +14,7 @@
     onPrev,
     onNext,
     onReplay,
+    onDownload,
   }: {
     player: TtsPanelState;
     lang: Lang;
@@ -26,10 +27,15 @@
     onPrev?: () => void;
     onNext?: () => void;
     onReplay?: () => void;
+    onDownload?: () => Promise<{ ok?: boolean; error?: string } | void> | void;
   } = $props();
 
   let seekValue = $state(0);
   let dragging = $state(false);
+  let expanded = $state(false);
+  let downloading = $state(false);
+  let downloadMsg = $state('');
+  let downloadOk = $state(false);
   $effect(() => {
     if (!dragging) seekValue = player.currentTime;
   });
@@ -39,6 +45,36 @@
   const pct = $derived(canSeek ? Math.max(0, Math.min(1, seekValue / player.duration)) : 0);
   const engineLabel = $derived(player.engine === 'edge' ? 'Edge' : lang === 'ar' ? 'المتصفح' : 'Browser');
   const bars = [7, 12, 18, 10, 22, 14, 8, 19, 13, 24, 9, 16, 21, 11, 7, 17, 12, 23, 14, 8, 18, 13, 21, 10, 15, 19, 9, 7];
+
+  async function doDownload(): Promise<void> {
+    if (!onDownload || downloading) return;
+    downloading = true;
+    downloadMsg = '';
+    downloadOk = false;
+    try {
+      const res = await onDownload();
+      if (res && res.ok === false) downloadMsg = res.error || (lang === 'ar' ? 'تعذر التحميل' : 'Download failed');
+      else {
+        downloadOk = true;
+        downloadMsg = lang === 'ar' ? 'تم تجهيز الملف وتنزيله' : 'Audio downloaded';
+      }
+    } catch (e) {
+      downloadMsg = e instanceof Error ? e.message : String(e);
+    } finally {
+      downloading = false;
+      setTimeout(() => (downloadMsg = ''), 4000);
+    }
+  }
+
+  function downloadText(): void {
+    const blob = new Blob([player.text], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `browsemate-voice-${Date.now()}.txt`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
 
   function fmt(sec: number): string {
     if (!Number.isFinite(sec) || sec < 0) sec = 0;
@@ -96,6 +132,10 @@
       {/if}
       {#if live && player.total > 1}<span class="voice-count">{player.index + 1}/{player.total}</span>{/if}
       <span class="voice-engine">{engineLabel}</span>
+      <button type="button" class="voice-mini" title={lang === 'ar' ? 'عرض النص' : 'Show text'} onclick={() => (expanded = !expanded)}>{expanded ? '▴' : '📄'}</button>
+      {#if onDownload}
+        <button type="button" class="voice-mini" title={lang === 'ar' ? 'تحميل الصوت' : 'Download audio'} disabled={downloading} onclick={doDownload}>{downloading ? '…' : '⬇'}</button>
+      {/if}
       <span class="voice-spacer"></span>
       {#if live && player.total > 1}
         <button type="button" class="voice-mini" title={lang === 'ar' ? 'السابق' : 'Previous'} onclick={onPrev}>⏮</button>
@@ -105,6 +145,13 @@
         <button type="button" class="voice-mini stop" title={lang === 'ar' ? 'إيقاف' : 'Stop'} onclick={onStop}>⏹</button>
       {/if}
     </div>
+    {#if expanded}
+      <div class="voice-fulltext" dir="auto">{player.text}</div>
+      <div class="voice-text-actions">
+        <button type="button" class="voice-mini" onclick={downloadText}>{lang === 'ar' ? 'تنزيل النص' : 'Download text'}</button>
+      </div>
+    {/if}
+    {#if downloadMsg}<div class="voice-dl-msg" class:ok={downloadOk}>{downloadMsg}</div>{/if}
   </div>
 </div>
 
@@ -208,4 +255,23 @@
   }
   .voice-mini:hover { background: var(--border-soft); color: var(--text); }
   .voice-mini.stop:hover { color: #f87171; }
+  .voice-mini:disabled { opacity: 0.5; cursor: wait; }
+  .voice-fulltext {
+    max-height: 220px;
+    overflow: auto;
+    white-space: pre-wrap;
+    user-select: text;
+    font-size: 12px;
+    line-height: 1.7;
+    color: var(--text);
+    background: var(--bg);
+    border: 1px solid var(--border-soft);
+    border-radius: 10px;
+    padding: 8px 10px;
+    margin-top: 2px;
+  }
+  .voice-text-actions { display: flex; justify-content: flex-end; }
+  .voice-text-actions .voice-mini { width: auto; padding: 0 8px; }
+  .voice-dl-msg { font-size: 10px; color: var(--warn); }
+  .voice-dl-msg.ok { color: var(--ok); }
 </style>

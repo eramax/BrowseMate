@@ -190,7 +190,7 @@ import { createZip, readZip } from '../../shared/zip';
           rate: 1,
         },
         (data) => {
-          readerEngine = data.engine === 'browser' ? 'browser' : 'edge';
+          readerEngine = 'edge';
           edgeVoiceAr = typeof data.edgeVoiceAr === 'string' && data.edgeVoiceAr ? data.edgeVoiceAr : 'ar-EG-ShakirNeural';
           edgeVoiceEn = typeof data.edgeVoiceEn === 'string' && data.edgeVoiceEn ? data.edgeVoiceEn : 'en-US-EmmaMultilingualNeural';
           edgeVoiceOther = typeof data.edgeVoiceOther === 'string' && data.edgeVoiceOther ? data.edgeVoiceOther : 'en-US-EmmaMultilingualNeural';
@@ -222,7 +222,7 @@ import { createZip, readZip } from '../../shared/zip';
     try {
       chrome.storage.local.set(
         {
-          engine: readerEngine,
+          engine: 'edge',
           edgeVoiceAr,
           edgeVoiceEn,
           edgeVoiceOther,
@@ -489,13 +489,9 @@ import { createZip, readZip } from '../../shared/zip';
       <div class="hint">{L.readerHint}</div>
 
       <label>{L.readerEngine}</label>
-      <select bind:value={readerEngine} onchange={saveReader}>
-        <option value="edge">{L.engineEdge}</option>
-        <option value="browser">{L.engineBrowser}</option>
-      </select>
+      <div class="hint">{L.engineEdge} — {lang === 'ar' ? 'Edge فقط' : 'Edge only'}</div>
 
-      {#if readerEngine === 'edge'}
-        <label>{L.arabicVoice}</label>
+      <label>{L.arabicVoice}</label>
         <select bind:value={edgeVoiceAr} onchange={saveReader} dir="ltr">
           {#if !hasVoice([...arNative, ...multiVoices], edgeVoiceAr)}
             <option value={edgeVoiceAr}>{edgeVoiceAr}</option>
@@ -537,18 +533,15 @@ import { createZip, readZip } from '../../shared/zip';
           {/if}
         </select>
 
-        <label>{L.otherVoice}</label>
-        <select bind:value={edgeVoiceOther} onchange={saveReader} dir="ltr">
-          {#if !hasVoice(multiVoices, edgeVoiceOther)}
-            <option value={edgeVoiceOther}>{edgeVoiceOther}</option>
-          {/if}
-          {#each multiVoices as v (v.name)}
-            <option value={v.name}>{voiceLabel(v)}</option>
-          {/each}
-        </select>
-      {:else}
-        <div class="hint">{L.browserHint}</div>
-      {/if}
+      <label>{L.otherVoice}</label>
+      <select bind:value={edgeVoiceOther} onchange={saveReader} dir="ltr">
+        {#if !hasVoice(multiVoices, edgeVoiceOther)}
+          <option value={edgeVoiceOther}>{edgeVoiceOther}</option>
+        {/if}
+        {#each multiVoices as v (v.name)}
+          <option value={v.name}>{voiceLabel(v)}</option>
+        {/each}
+      </select>
 
       <label>{L.readerRate}</label>
       <select bind:value={readerRate} onchange={saveReader} dir="ltr">
