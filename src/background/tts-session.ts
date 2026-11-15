@@ -8,6 +8,7 @@ import {
   edgeExport,
   edgePause,
   edgeResume,
+  resetEdgeConnection,
   edgeSeek,
   edgeSpeak,
   edgeState,
@@ -271,7 +272,14 @@ export async function downloadTts(
   const edgeVoice = edgeVoiceFor(clean, voice);
   const segments = buildSpeechSegments(clean, edgeVoice, rateValue);
   if (!segments.length) return { ok: false, error: 'NO_SEGMENTS' };
-  const res = await edgeExport(segments.map(({ key, text: part }) => ({ key, text: part })), edgeVoice, rateValue);
+  const items = segments.map(({ key, text: part }) => ({ key, text: part }));
+  let res = await edgeExport(items, edgeVoice, rateValue);
+  // المقاطع الناجحة تُخزّن في الكاش؛ إعادة المحاولة تكمل من المقطع الفاشل فقط
+  if (!res.ok && /EDGE_TIMEOUT|EDGE_NO_WS|EDGE_WS|ENGINE_TIMEOUT|EDGE_SEND_FAILED/i.test(String(res.error || ''))) {
+    await resetEdgeConnection();
+    await new Promise((r) => setTimeout(r, 250));
+    res = await edgeExport(items, edgeVoice, rateValue);
+  }
   if (!res.ok || !res.base64) return { ok: false, error: res.error || 'EXPORT_FAILED' };
   const filename = `browsemate-voice-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}.mp3`;
   try {

@@ -555,6 +555,8 @@
         if (!entry || !entry.bytes) throw new Error('EDGE_EXPORT_CACHE_MISS');
         parts.push(entry.bytes);
         log('export part', i, entry.bytes.length);
+        // فاصل صغير يقلل rate-limit من Edge عند التصدير المتتابع
+        if (i + 1 < items.length) await new Promise((r) => setTimeout(r, 120));
       }
       const merged = mergedAudio(parts);
       if (!merged.length) throw new Error('EDGE_EXPORT_EMPTY');
